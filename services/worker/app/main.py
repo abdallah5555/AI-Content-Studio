@@ -14,8 +14,9 @@ from .providers import router as providers_router
 from .reference_analysis import REFERENCE_FILES, router as references_router
 from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
+from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
 
-app = FastAPI(title="AI Content Studio Worker", version="0.7.0")
+app = FastAPI(title="AI Content Studio Worker", version="0.8.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +29,7 @@ app.include_router(providers_router)
 app.include_router(references_router)
 app.include_router(tts_router)
 app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
+app.mount("/media/renders", StaticFiles(directory=str(RENDER_ROOT)), name="render-media")
 
 
 class Stage(str, Enum):
@@ -48,7 +50,7 @@ STAGE_MESSAGES = {
     Stage.SCRIPT: "جاري كتابة السكربت والخطاف",
     Stage.TTS: "جاري تحويل السكربت إلى تعليق صوتي",
     Stage.MEDIA: "جاري البحث عن أفضل المشاهد المناسبة",
-    Stage.EDIT: "جاري تركيب الفيديو والمزامنة",
+    Stage.EDIT: "جاري تنزيل المشاهد وتركيب الفيديو مع الصوت",
     Stage.EFFECTS: "جاري إضافة الانتقالات والمؤثرات",
     Stage.MUSIC: "جاري تجهيز الموسيقى الخلفية",
     Stage.EXPORT: "جاري تصدير الفيديو النهائي",
@@ -158,7 +160,24 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         job["provider_failover_log"] = result.get("failover_log", [])
         return
 
-    # Edit/effects/music/export/SEO connectors are added stage-by-stage.
+    if stage == Stage.EDIT:
+        media_result = stage_output_for(job, Stage.MEDIA)
+        tts_result = stage_output_for(job, Stage.TTS)
+        if not media_result or not tts_result:
+            raise RuntimeError("Edit stage requires completed media and TTS stages")
+        result = await asyncio.to_thread(
+            render_montage,
+            media_result,
+            tts_result,
+            payload.get("aspect_ratio") or "9:16",
+        )
+        job["outputs"][Stage.EDIT.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = []
+        return
+
+    # Effects/music/export/SEO connectors are added stage-by-stage.
     await asyncio.sleep(1.0)
     placeholder = {
         "status": "prepared",
@@ -208,7 +227,13 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": app.version, "jobs": len(jobs), "references": len(REFERENCE_FILES)}
+    return {
+        "status": "ok",
+        "version": app.version,
+        "jobs": len(jobs),
+        "references": len(REFERENCE_FILES),
+        "ffmpeg": ffmpeg_available(),
+    }
 
 
 @app.post("/jobs")
