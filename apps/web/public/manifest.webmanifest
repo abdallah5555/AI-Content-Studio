@@ -1,0 +1,20 @@
+{
+  "name": "AI Content Studio",
+  "short_name": "Content Studio",
+  "description": "Arabic-first AI content production studio",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#111827",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
