@@ -54,6 +54,56 @@ function prettySize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function prettyValue(value: unknown): string {
+  if (value == null) return '—';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value, null, 2);
+}
+
+function GenerationOutput({ job }: { job: JobStatus }) {
+  const output = job.stage_output;
+  if (!output && !job.error) return null;
+
+  const content = output?.content ?? {};
+  const entries = Object.entries(content);
+
+  return (
+    <section className={`generation-output ${job.error ? 'generation-output-error' : ''}`}>
+      <div className="generation-output-head">
+        <div>
+          <span className="eyebrow">ناتج المرحلة الحالية</span>
+          <strong>{job.stage === 'idea' ? 'الفكرة' : job.stage === 'script' ? 'السكريبت' : job.stage}</strong>
+        </div>
+        {job.active_provider && <span className="provider-pill">{job.active_provider}</span>}
+      </div>
+
+      {job.error ? (
+        <div className="generation-error">{job.error}</div>
+      ) : entries.length ? (
+        <div className="generation-fields">
+          {entries.map(([key, value]) => (
+            <div className="generation-field" key={key}>
+              <span>{key}</span>
+              <pre>{prettyValue(value)}</pre>
+            </div>
+          ))}
+        </div>
+      ) : output?.message ? (
+        <p className="generation-message">{output.message}</p>
+      ) : null}
+
+      {job.provider_failover_log && job.provider_failover_log.length > 0 && (
+        <details className="failover-details">
+          <summary>تفاصيل التحويل بين مزودي الذكاء الاصطناعي</summary>
+          <ul>
+            {job.provider_failover_log.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
 export function App() {
   const [view, setView] = useState<View>('dashboard');
   const [platformId, setPlatformId] = useState<PlatformId>('tiktok');
@@ -109,6 +159,12 @@ export function App() {
   async function startJob() {
     if (!ideaPrompt.trim()) {
       setError('اكتب الفكرة التي تريد تنفيذها أولًا.');
+      return;
+    }
+
+    const failedReferences = references.filter((reference) => reference.analysis_status === 'failed');
+    if (failedReferences.length) {
+      setError('يوجد مرجع لم يكتمل تحليله. احذف المرجع أو أصلح إعداد Gemini قبل بدء التوليد.');
       return;
     }
 
@@ -207,7 +263,7 @@ export function App() {
                 <input type="file" accept="image/*,video/*" multiple onChange={handleReferenceFiles} disabled={uploading} />
                 {uploading ? <LoaderCircle className="spin" size={24} /> : <ImagePlus size={24} />}
                 <div>
-                  <strong>{uploading ? 'جاري رفع المرجع...' : 'ارفع صورة أو فيديو كمرجع'}</strong>
+                  <strong>{uploading ? 'جاري رفع وتحليل المرجع...' : 'ارفع صورة أو فيديو كمرجع'}</strong>
                   <span>الحد الحالي 100MB لكل ملف. الملفات تذهب للـWorker ولا يتم وضعها داخل GitHub.</span>
                 </div>
               </label>
@@ -218,9 +274,14 @@ export function App() {
                     <div className="reference-item" key={reference.id}>
                       <div>
                         <strong>{reference.name}</strong>
-                        <span>{reference.kind === 'video' ? 'فيديو' : 'صورة'} · {prettySize(reference.size_bytes)}</span>
+                        <span>
+                          {reference.kind === 'video' ? 'فيديو' : 'صورة'} · {prettySize(reference.size_bytes)} · {
+                            reference.analysis_status === 'ready' ? 'تم التحليل' :
+                            reference.analysis_status === 'failed' ? 'فشل التحليل' : 'جاري التحليل'
+                          }
+                        </span>
                       </div>
-                      <CheckCircle2 size={18} />
+                      {reference.analysis_status === 'ready' && <CheckCircle2 size={18} />}
                     </div>
                   ))}
                 </div>
@@ -296,8 +357,10 @@ export function App() {
               </div>
               <strong className="progress-number">{job.progress}%</strong>
             </div>
+
             {job.reference_summary && <div className="reference-summary">{job.reference_summary}</div>}
             <div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div>
+
             <div className="pipeline live-pipeline">
               {pipelineStages.map((stage, index) => {
                 const currentIndex = pipelineStages.findIndex((item) => item.key === job.stage);
@@ -311,9 +374,12 @@ export function App() {
                 );
               })}
             </div>
+
+            <GenerationOutput job={job} />
+
             {job.status === 'waiting_review' && (
               <div className="review-action">
-                <div><strong>المرحلة الحالية جاهزة للمراجعة</strong><span>وافق عليها للاستمرار للمرحلة التالية.</span></div>
+                <div><strong>المرحلة الحالية جاهزة للمراجعة</strong><span>راجع الناتج بالأعلى، ثم وافق للاستمرار للمرحلة التالية.</span></div>
                 <button className="cta" onClick={continueAfterReview} disabled={approving}>
                   {approving ? <LoaderCircle className="spin" size={18} /> : <CheckCircle2 size={18} />}
                   موافقة والاستمرار
