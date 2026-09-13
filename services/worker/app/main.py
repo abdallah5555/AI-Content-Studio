@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .effects import EFFECTS_ROOT, apply_effects
 from .generation import generate_idea, generate_script
 from .media_search import select_media_for_script
 from .providers import router as providers_router
@@ -16,7 +17,7 @@ from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
 
-app = FastAPI(title="AI Content Studio Worker", version="0.8.0")
+app = FastAPI(title="AI Content Studio Worker", version="0.9.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +31,7 @@ app.include_router(references_router)
 app.include_router(tts_router)
 app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
 app.mount("/media/renders", StaticFiles(directory=str(RENDER_ROOT)), name="render-media")
+app.mount("/media/effects", StaticFiles(directory=str(EFFECTS_ROOT)), name="effects-media")
 
 
 class Stage(str, Enum):
@@ -51,7 +53,7 @@ STAGE_MESSAGES = {
     Stage.TTS: "جاري تحويل السكربت إلى تعليق صوتي",
     Stage.MEDIA: "جاري البحث عن أفضل المشاهد المناسبة",
     Stage.EDIT: "جاري تنزيل المشاهد وتركيب الفيديو مع الصوت",
-    Stage.EFFECTS: "جاري إضافة الانتقالات والمؤثرات",
+    Stage.EFFECTS: "جاري إضافة الكابشن والمؤثرات البصرية",
     Stage.MUSIC: "جاري تجهيز الموسيقى الخلفية",
     Stage.EXPORT: "جاري تصدير الفيديو النهائي",
     Stage.SEO: "جاري تجهيز العنوان والوصف والكلمات المفتاحية",
@@ -177,7 +179,19 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         job["provider_failover_log"] = []
         return
 
-    # Effects/music/export/SEO connectors are added stage-by-stage.
+    if stage == Stage.EFFECTS:
+        edit_result = stage_output_for(job, Stage.EDIT)
+        media_result = stage_output_for(job, Stage.MEDIA)
+        if not edit_result or not media_result:
+            raise RuntimeError("Effects stage requires completed edit and media stages")
+        result = await asyncio.to_thread(apply_effects, edit_result, media_result)
+        job["outputs"][Stage.EFFECTS.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = []
+        return
+
+    # Music/export/SEO connectors are added stage-by-stage.
     await asyncio.sleep(1.0)
     placeholder = {
         "status": "prepared",
