@@ -1,9 +1,31 @@
+export type ReferencePreferences = {
+  preserve_style: boolean;
+  preserve_colors: boolean;
+  preserve_composition: boolean;
+  preserve_motion: boolean;
+  preserve_character_shape: boolean;
+};
+
+export type UploadedReference = {
+  id: string;
+  name: string;
+  kind: 'image' | 'video';
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  analysis_status: 'queued' | 'ready';
+};
+
 export type CreateJobPayload = {
   platform: string;
   aspect_ratio: string;
   duration_seconds: number;
   content_type: string;
   review_each_stage: boolean;
+  idea_prompt: string;
+  reference_mode: 'none' | 'adapt_style_to_new_idea';
+  reference_ids: string[];
+  reference_preferences: ReferencePreferences;
 };
 
 export type JobStatus = {
@@ -13,6 +35,7 @@ export type JobStatus = {
   progress: number;
   message: string;
   input: CreateJobPayload;
+  reference_summary?: string | null;
 };
 
 const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -23,6 +46,15 @@ async function parseResponse<T>(response: Response): Promise<T> {
     throw new Error(message || `Request failed with ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+export async function uploadReference(file: File): Promise<UploadedReference> {
+  const body = new FormData();
+  body.append('file', file);
+  return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, {
+    method: 'POST',
+    body,
+  }));
 }
 
 export async function createJob(payload: CreateJobPayload): Promise<JobStatus> {
