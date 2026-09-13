@@ -9,15 +9,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .effects import EFFECTS_ROOT, apply_effects
+from .exporter import EXPORT_ROOT, export_video
 from .generation import generate_idea, generate_script
 from .media_search import select_media_for_script
+from .music import MUSIC_OUTPUT_ROOT, mix_background_music, router as music_router
 from .providers import router as providers_router
 from .reference_analysis import REFERENCE_FILES, router as references_router
+from .seo import generate_seo
 from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
 
-app = FastAPI(title="AI Content Studio Worker", version="0.9.0")
+app = FastAPI(title="AI Content Studio Worker", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,9 +32,12 @@ app.add_middleware(
 app.include_router(providers_router)
 app.include_router(references_router)
 app.include_router(tts_router)
+app.include_router(music_router)
 app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
 app.mount("/media/renders", StaticFiles(directory=str(RENDER_ROOT)), name="render-media")
 app.mount("/media/effects", StaticFiles(directory=str(EFFECTS_ROOT)), name="effects-media")
+app.mount("/media/music", StaticFiles(directory=str(MUSIC_OUTPUT_ROOT)), name="music-media")
+app.mount("/media/exports", StaticFiles(directory=str(EXPORT_ROOT)), name="export-media")
 
 
 class Stage(str, Enum):
@@ -54,8 +60,8 @@ STAGE_MESSAGES = {
     Stage.MEDIA: "جاري البحث عن أفضل المشاهد المناسبة",
     Stage.EDIT: "جاري تنزيل المشاهد وتركيب الفيديو مع الصوت",
     Stage.EFFECTS: "جاري إضافة الكابشن والمؤثرات البصرية",
-    Stage.MUSIC: "جاري تجهيز الموسيقى الخلفية",
-    Stage.EXPORT: "جاري تصدير الفيديو النهائي",
+    Stage.MUSIC: "جاري إضافة موسيقى خلفية مناسبة إن توفرت",
+    Stage.EXPORT: "جاري تجهيز ملف MP4 النهائي",
     Stage.SEO: "جاري تجهيز العنوان والوصف والكلمات المفتاحية",
 }
 
@@ -80,6 +86,7 @@ class CreateJobRequest(BaseModel):
     reference_preferences: ReferencePreferences = ReferencePreferences()
     tts_voice: str = "ar-EG-SalmaNeural"
     tts_rate: str = "+0%"
+    music_volume: float = Field(default=0.12, ge=0.0, le=0.5)
 
 
 jobs: dict[str, dict[str, Any]] = {}
@@ -191,14 +198,43 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         job["provider_failover_log"] = []
         return
 
-    # Music/export/SEO connectors are added stage-by-stage.
-    await asyncio.sleep(1.0)
-    placeholder = {
-        "status": "prepared",
-        "message": f"{STAGE_MESSAGES[stage]} — موصل التنفيذ الفعلي لهذه المرحلة سيضاف في المرحلة التالية.",
-    }
-    job["outputs"][stage.value] = placeholder
-    job["stage_output"] = placeholder
+    if stage == Stage.MUSIC:
+        effects_result = stage_output_for(job, Stage.EFFECTS)
+        if not effects_result:
+            raise RuntimeError("Music stage requires a completed effects stage")
+        result = await asyncio.to_thread(
+            mix_background_music,
+            effects_result,
+            float(payload.get("music_volume") or 0.12),
+        )
+        job["outputs"][Stage.MUSIC.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = []
+        return
+
+    if stage == Stage.EXPORT:
+        music_result = stage_output_for(job, Stage.MUSIC)
+        script_result = stage_output_for(job, Stage.SCRIPT)
+        if not music_result or not script_result:
+            raise RuntimeError("Export stage requires completed music and script stages")
+        result = await asyncio.to_thread(export_video, music_result, script_result)
+        job["outputs"][Stage.EXPORT.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = []
+        return
+
+    if stage == Stage.SEO:
+        script_result = stage_output_for(job, Stage.SCRIPT)
+        if not script_result:
+            raise RuntimeError("SEO stage requires a completed script stage")
+        result = await asyncio.to_thread(generate_seo, payload, script_result)
+        job["outputs"][Stage.SEO.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = result.get("failover_log", [])
+        return
 
 
 async def run_pipeline(job_id: str, start_index: int = 0) -> None:
@@ -235,7 +271,7 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
     job["status"] = "completed"
     job["progress"] = 100
     job["stage"] = Stage.SEO.value
-    job["message"] = "اكتمل خط الإنتاج التجريبي بنجاح"
+    job["message"] = "اكتمل خط الإنتاج بنجاح وأصبح ملف MP4 وبيانات النشر جاهزين"
     job["_next_stage_index"] = len(STAGES)
 
 
