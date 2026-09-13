@@ -65,19 +65,29 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function uploadReference(file: File): Promise<UploadedReference> {
-  const body = new FormData();
-  body.append('file', file);
-  return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, {
-    method: 'POST',
-    body,
-  }));
-}
-
 export async function analyzeReference(referenceId: string): Promise<UploadedReference> {
   return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references/${referenceId}/analyze`, {
     method: 'POST',
   }));
+}
+
+export async function uploadReference(file: File): Promise<UploadedReference> {
+  const body = new FormData();
+  body.append('file', file);
+  const uploaded = await parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, {
+    method: 'POST',
+    body,
+  }));
+
+  try {
+    return await analyzeReference(uploaded.id);
+  } catch (error) {
+    return {
+      ...uploaded,
+      analysis_status: 'failed',
+      analysis_error: error instanceof Error ? error.message : 'Reference analysis failed',
+    };
+  }
 }
 
 export async function createJob(payload: CreateJobPayload): Promise<JobStatus> {
