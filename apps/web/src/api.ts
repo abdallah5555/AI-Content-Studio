@@ -102,6 +102,40 @@ export type JobSummary = {
   updated_at: string;
 };
 
+export type TrendItem = {
+  key: string;
+  title: string;
+  geo: string;
+  source: string;
+  traffic: number;
+  traffic_label?: string;
+  published_at?: string | null;
+  age_hours: number;
+  velocity_score: number;
+  saturation_score: number;
+  score: number;
+  lifecycle: 'early' | 'rising' | 'strong' | 'saturated' | 'cooling' | string;
+  related_news?: { title: string; url?: string | null }[];
+  source_url?: string;
+  watched_at?: string;
+};
+
+export type IntelligenceResult = {
+  provider?: string;
+  content: Record<string, unknown>;
+  failover_log?: string[];
+};
+
+export type IdeaInboxItem = {
+  id: string;
+  text: string;
+  tags: string[];
+  status: string;
+  score?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 export function resolveWorkerUrl(path: string): string {
@@ -118,35 +152,23 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function analyzeReference(referenceId: string): Promise<UploadedReference> {
-  return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references/${referenceId}/analyze`, {
-    method: 'POST',
-  }));
+  return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references/${referenceId}/analyze`, { method: 'POST' }));
 }
 
 export async function uploadReference(file: File): Promise<UploadedReference> {
   const body = new FormData();
   body.append('file', file);
-  const uploaded = await parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, {
-    method: 'POST',
-    body,
-  }));
-
+  const uploaded = await parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, { method: 'POST', body }));
   try {
     return await analyzeReference(uploaded.id);
   } catch (error) {
-    return {
-      ...uploaded,
-      analysis_status: 'failed',
-      analysis_error: error instanceof Error ? error.message : 'Reference analysis failed',
-    };
+    return { ...uploaded, analysis_status: 'failed', analysis_error: error instanceof Error ? error.message : 'Reference analysis failed' };
   }
 }
 
 export async function createJob(payload: CreateJobPayload): Promise<JobStatus> {
   return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }));
 }
 
@@ -160,27 +182,89 @@ export async function getJob(jobId: string): Promise<JobStatus> {
 }
 
 export async function deleteJob(jobId: string): Promise<void> {
-  await parseResponse<{ deleted: boolean }>(await fetch(`${workerBaseUrl}/jobs/${jobId}`, {
-    method: 'DELETE',
-  }));
+  await parseResponse<{ deleted: boolean }>(await fetch(`${workerBaseUrl}/jobs/${jobId}`, { method: 'DELETE' }));
 }
 
 export async function approveJob(jobId: string): Promise<JobStatus> {
-  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/approve`, {
-    method: 'POST',
-  }));
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/approve`, { method: 'POST' }));
 }
 
 export async function regenerateJobStage(jobId: string, stage: string): Promise<JobStatus> {
-  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}/regenerate`, {
-    method: 'POST',
-  }));
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}/regenerate`, { method: 'POST' }));
 }
 
 export async function editJobStage(jobId: string, stage: string, content: Record<string, unknown>): Promise<JobStatus> {
   return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}`, {
-    method: 'PATCH',
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
+  }));
+}
+
+export async function getTrends(geo = 'EG', limit = 30): Promise<TrendItem[]> {
+  const result = await parseResponse<{ items: TrendItem[] }>(await fetch(`${workerBaseUrl}/intelligence/trends?geo=${encodeURIComponent(geo)}&limit=${limit}`));
+  return result.items;
+}
+
+export async function refreshTrends(geo = 'EG', limit = 30): Promise<TrendItem[]> {
+  const result = await parseResponse<{ items: TrendItem[] }>(await fetch(`${workerBaseUrl}/intelligence/trends/refresh?geo=${encodeURIComponent(geo)}&limit=${limit}`, { method: 'POST' }));
+  return result.items;
+}
+
+export async function listTrendWatchlist(): Promise<TrendItem[]> {
+  const result = await parseResponse<{ items: TrendItem[] }>(await fetch(`${workerBaseUrl}/intelligence/watchlist`));
+  return result.items;
+}
+
+export async function watchTrend(trend: TrendItem, geo = 'EG'): Promise<void> {
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/watchlist`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trend, geo }),
+  }));
+}
+
+export async function unwatchTrend(key: string): Promise<void> {
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/watchlist/${encodeURIComponent(key)}`, { method: 'DELETE' }));
+}
+
+export async function runIntelligenceTool(
+  tool: string,
+  input: string,
+  options: { context?: Record<string, unknown>; language?: string; platform?: string; audience?: string } = {},
+): Promise<IntelligenceResult> {
+  return parseResponse<IntelligenceResult>(await fetch(`${workerBaseUrl}/intelligence/generate/${tool}`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ input, context: options.context || {}, language: options.language || 'ar-EG', platform: options.platform || null, audience: options.audience || null }),
+  }));
+}
+
+export async function listIdeaInbox(): Promise<IdeaInboxItem[]> {
+  const result = await parseResponse<{ ideas: IdeaInboxItem[] }>(await fetch(`${workerBaseUrl}/intelligence/inbox`));
+  return result.ideas;
+}
+
+export async function addIdeaInbox(text: string, tags: string[] = []): Promise<IdeaInboxItem> {
+  const result = await parseResponse<{ idea: IdeaInboxItem }>(await fetch(`${workerBaseUrl}/intelligence/inbox`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, tags }),
+  }));
+  return result.idea;
+}
+
+export async function deleteIdeaInbox(id: string): Promise<void> {
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/inbox/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+}
+
+export async function getBrandProfile(): Promise<Record<string, unknown>> {
+  const result = await parseResponse<{ profile: Record<string, unknown> }>(await fetch(`${workerBaseUrl}/intelligence/brand`));
+  return result.profile;
+}
+
+export async function saveBrandProfile(profile: Record<string, unknown>): Promise<void> {
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/brand`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile }),
+  }));
+}
+
+export async function recordPerformance(payload: Record<string, unknown>): Promise<void> {
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/performance`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }));
 }
