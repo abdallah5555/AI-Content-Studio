@@ -38,9 +38,7 @@ def init_job_store() -> None:
             )
             """
         )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at DESC)"
-        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at DESC)")
 
 
 def save_job(job: dict[str, Any]) -> None:
@@ -109,6 +107,38 @@ def list_job_summaries(limit: int = 50) -> list[dict[str, Any]]:
             (safe_limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def recent_idea_context(limit: int = 30) -> list[str]:
+    safe_limit = min(max(int(limit), 1), 100)
+    with _LOCK, _connect() as connection:
+        rows = connection.execute(
+            "SELECT payload_json FROM jobs ORDER BY updated_at DESC LIMIT ?",
+            (safe_limit,),
+        ).fetchall()
+
+    seen: set[str] = set()
+    ideas: list[str] = []
+    for row in rows:
+        try:
+            job = json.loads(row["payload_json"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        candidates = [str((job.get("input") or {}).get("idea_prompt") or "").strip()]
+        idea_content = (((job.get("outputs") or {}).get("idea") or {}).get("content") or {})
+        script_content = (((job.get("outputs") or {}).get("script") or {}).get("content") or {})
+        candidates.extend([
+            str(idea_content.get("idea_title") or "").strip(),
+            str(idea_content.get("core_idea") or "").strip(),
+            str(script_content.get("title") or "").strip(),
+        ])
+        for candidate in candidates:
+            key = " ".join(candidate.lower().split())
+            if len(key) < 4 or key in seen:
+                continue
+            seen.add(key)
+            ideas.append(candidate)
+    return ideas[:60]
 
 
 def delete_job(job_id: str) -> None:
