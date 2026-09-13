@@ -36,3 +36,9 @@ export async function createJob(payload: CreateJobPayload): Promise<JobStatus> {
 export async function getJob(jobId: string): Promise<JobStatus> {
   return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}`));
 }
+
+export async function approveJob(jobId: string): Promise<JobStatus> {
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/approve`, {
+    method: 'POST',
+  }));
+}
