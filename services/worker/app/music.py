@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from .scheduler import router as scheduler_router
+
 router = APIRouter(prefix="/music", tags=["music"])
 
 MUSIC_LIBRARY_ROOT = Path(os.getenv("MUSIC_LIBRARY_DIR", "assets/music"))
@@ -134,3 +136,9 @@ def mix_background_music(
         "video_url": f"/media/music/{output_id}.mp4",
         "size_bytes": output.stat().st_size,
     }
+
+
+# The main worker already mounts this router. Extending it with the scheduler
+# routes keeps the scheduler registered without duplicating route wiring in
+# multiple application entry points.
+router.routes.extend(scheduler_router.routes)
