@@ -45,6 +45,7 @@ export type CreateJobPayload = {
   reference_preferences: ReferencePreferences;
   tts_voice?: string;
   tts_rate?: string;
+  music_volume?: number;
 };
 
 export type StageGenerationResult = {
@@ -55,11 +56,23 @@ export type StageGenerationResult = {
   message?: string;
   audio_id?: string;
   audio_url?: string;
+  audio_path?: string;
   voice?: string;
   rate?: string;
   format?: string;
   size_bytes?: number;
   text_length?: number;
+  video_url?: string;
+  video_path?: string;
+  download_url?: string;
+  filename?: string;
+  warning?: string | null;
+  music_applied?: boolean;
+  track?: string;
+  captions_count?: number;
+  captions_burned?: boolean;
+  fade_applied?: boolean;
+  [key: string]: unknown;
 };
 
 export type JobStatus = {
