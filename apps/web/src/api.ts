@@ -15,7 +15,7 @@ export type JobStatus = {
   input: CreateJobPayload;
 };
 
-const workerBaseUrl = (import.meta.env.VITE_WORKER_URL || 'http://localhost:8000').replace(/\/$/, '');
+const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
