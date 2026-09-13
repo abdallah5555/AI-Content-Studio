@@ -1,4 +1,4 @@
-import { installNativeBackHandler, installNetworkListener, isNativeApp, shareVideo } from './native';
+import { installNativeBackHandler, installNetworkListener, isNativeApp, saveVideoToDevice, shareVideo } from './native';
 
 type Cleanup = () => void;
 
@@ -15,11 +15,33 @@ function ensureNetworkBanner() {
   return banner;
 }
 
-function installShareButtons(): Cleanup {
+function installNativeDownloadButtons(): Cleanup {
   const enhance = () => {
     document.querySelectorAll<HTMLAnchorElement>('a.download-link').forEach((link) => {
       if (link.dataset.nativeEnhanced === 'true') return;
       link.dataset.nativeEnhanced = 'true';
+
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'native-share-button';
+      save.textContent = 'حفظ على الجهاز';
+      save.addEventListener('click', async () => {
+        const original = save.textContent;
+        save.disabled = true;
+        save.textContent = 'جاري الحفظ...';
+        try {
+          await saveVideoToDevice(link.href, link.download || 'ai-content-studio.mp4');
+          save.textContent = 'تم الحفظ ✓';
+        } catch {
+          save.textContent = 'تعذر الحفظ';
+        } finally {
+          window.setTimeout(() => {
+            save.disabled = false;
+            save.textContent = original;
+          }, 2200);
+        }
+      });
+
       const share = document.createElement('button');
       share.type = 'button';
       share.className = 'native-share-button';
@@ -27,7 +49,9 @@ function installShareButtons(): Cleanup {
       share.addEventListener('click', () => {
         void shareVideo(link.href, link.download || 'AI Content Studio').catch(() => undefined);
       });
+
       link.insertAdjacentElement('afterend', share);
+      link.insertAdjacentElement('afterend', save);
     });
   };
 
@@ -52,7 +76,7 @@ export async function bootstrapRuntime() {
   const banner = ensureNetworkBanner();
   let removeNetwork: Cleanup = () => {};
   let removeBack: Cleanup = () => {};
-  let removeShare: Cleanup = () => {};
+  let removeNativeDownloads: Cleanup = () => {};
 
   try {
     removeNetwork = await installNetworkListener((connected) => {
@@ -64,7 +88,7 @@ export async function bootstrapRuntime() {
   }
 
   if (isNativeApp()) {
-    removeShare = installShareButtons();
+    removeNativeDownloads = installNativeDownloadButtons();
     try {
       removeBack = await installNativeBackHandler(() => {
         const back = document.querySelector<HTMLButtonElement>('button.back-button');
@@ -86,6 +110,6 @@ export async function bootstrapRuntime() {
   return () => {
     removeNetwork();
     removeBack();
-    removeShare();
+    removeNativeDownloads();
   };
 }
