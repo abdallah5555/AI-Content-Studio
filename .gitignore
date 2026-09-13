@@ -10,3 +10,7 @@ __pycache__/
 coverage/
 output/
 tmp/
+data/
+*.db
+*.db-shm
+*.db-wal
