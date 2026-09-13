@@ -9,6 +9,7 @@ from threading import Lock
 from typing import Any
 
 from .supabase_rest import configured as supabase_configured
+from .supabase_rest import create_signed_url
 from .supabase_rest import delete as supabase_delete
 from .supabase_rest import select as supabase_select
 from .supabase_rest import upsert as supabase_upsert
@@ -16,6 +17,8 @@ from .supabase_rest import upsert as supabase_upsert
 DB_PATH = Path(os.getenv("JOB_DB_PATH", "data/ai_content_studio.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _LOCK = Lock()
+EXPORT_BUCKET = "content-studio-exports"
+EXPORT_LINK_TTL = 7 * 24 * 60 * 60
 
 
 def _connect() -> sqlite3.Connection:
@@ -51,6 +54,23 @@ def _job_title(job: dict[str, Any]) -> str | None:
     script_output = (job.get("outputs") or {}).get("script") or {}
     script_content = script_output.get("content") or {}
     return str(script_content.get("title") or "").strip() or None
+
+
+def _refresh_export_url(job: dict[str, Any]) -> dict[str, Any]:
+    if not supabase_configured():
+        return job
+    export = ((job.get("outputs") or {}).get("export") or {})
+    storage_path = str(export.get("storage_path") or "")
+    filename = str(export.get("filename") or "")
+    prefix = f"{EXPORT_BUCKET}/"
+    if not storage_path.startswith(prefix) or not filename:
+        return job
+    object_path = storage_path[len(prefix):]
+    try:
+        export["download_url"] = create_signed_url(EXPORT_BUCKET, object_path, expires_in=EXPORT_LINK_TTL, download_name=filename)
+    except Exception:
+        pass
+    return job
 
 
 def save_job(job: dict[str, Any]) -> None:
@@ -98,7 +118,12 @@ def save_job(job: dict[str, Any]) -> None:
 def load_jobs() -> dict[str, dict[str, Any]]:
     if supabase_configured():
         rows = supabase_select("content_studio_jobs", columns="id,payload")
-        return {str(row["id"]): row["payload"] for row in rows if isinstance(row.get("payload"), dict)}
+        loaded: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            payload = row.get("payload")
+            if isinstance(payload, dict):
+                loaded[str(row["id"])] = _refresh_export_url(payload)
+        return loaded
 
     init_job_store()
     with _LOCK, _connect() as connection:
