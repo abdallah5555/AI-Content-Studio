@@ -67,11 +67,13 @@ jobs:
           JOB_DB_PATH: /tmp/ai-content-studio-ci.db
           INTELLIGENCE_DB_PATH: /tmp/ai-content-intelligence-ci.db
           REFERENCE_DB_PATH: /tmp/ai-content-references-ci.db
+          SCHEDULE_DB_PATH: /tmp/ai-content-schedule-ci.db
         run: |
           PYTHONPATH=services/worker python - <<'PY'
           from app.job_store import init_job_store, save_job, load_jobs, list_job_summaries
           from app.reference_store import init_reference_store, save_reference, load_references
           from app.intelligence_store import add_idea, get_brand_profile, init_intelligence_store, list_ideas, save_brand_profile
+          from app.scheduler import create_scheduled, list_scheduled, ScheduleRequest
           init_job_store()
           job = {"id":"ci-job","status":"waiting_review","stage":"script","progress":22,"input":{"idea_prompt":"test"},"outputs":{"script":{"content":{"title":"CI Test"}}}}
           save_job(job)
@@ -88,12 +90,16 @@ jobs:
           assert any(item["id"] == idea["id"] for item in list_ideas())
           save_brand_profile({"voice":"friendly Egyptian Arabic","content_pillars":["AI"]})
           assert get_brand_profile()["profile"]["voice"] == "friendly Egyptian Arabic"
+          created = create_scheduled(ScheduleRequest(job_id="ci-job", platform="tiktok", scheduled_at="2026-09-14T18:00:00+00:00", title="CI Schedule"))
+          assert created["item"]["job_id"] == "ci-job"
+          assert any(item["id"] == created["item"]["id"] for item in list_scheduled()["items"])
           PY
       - name: Verify worker app import
         env:
           JOB_DB_PATH: /tmp/ai-content-studio-app-ci.db
           INTELLIGENCE_DB_PATH: /tmp/ai-content-intelligence-app-ci.db
           REFERENCE_DB_PATH: /tmp/ai-content-references-app-ci.db
+          SCHEDULE_DB_PATH: /tmp/ai-content-schedule-app-ci.db
         run: |
           PYTHONPATH=services/worker python - <<'PY'
           from app.content_intelligence import router
@@ -106,6 +112,9 @@ jobs:
           assert app.version == "1.3.0", f"unexpected app version: {app.version}"
           assert router_paths, "content intelligence router has no routes"
           assert "/intelligence/trends" in app_paths, f"missing /intelligence/trends; router={router_paths}; app={app_paths}"
+          assert "/schedule" in app_paths, f"missing /schedule; app={app_paths}"
+          assert "/providers/status" in app_paths, f"missing provider status; app={app_paths}"
+          assert "/music/library" in app_paths, f"missing music library; app={app_paths}"
           PY
       - name: Verify trend scoring parser
         env:
