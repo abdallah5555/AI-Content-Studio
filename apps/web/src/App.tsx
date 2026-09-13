@@ -16,6 +16,7 @@ import {
   approveJob,
   createJob,
   getJob,
+  resolveWorkerUrl,
   uploadReference,
   type JobStatus,
   type ReferencePreferences,
@@ -49,6 +50,11 @@ const preferenceOptions: { key: PreferenceKey; label: string; hint: string }[] =
   { key: 'preserve_character_shape', label: 'شكل العناصر', hint: 'هوية شكل قريبة بدون نسخ المحتوى.' },
 ];
 
+const voiceOptions = [
+  { id: 'ar-EG-SalmaNeural', label: 'سلمى', hint: 'صوت أنثى عربي مصري' },
+  { id: 'ar-EG-ShakirNeural', label: 'شاكر', hint: 'صوت ذكر عربي مصري' },
+];
+
 function prettySize(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -72,13 +78,21 @@ function GenerationOutput({ job }: { job: JobStatus }) {
       <div className="generation-output-head">
         <div>
           <span className="eyebrow">ناتج المرحلة الحالية</span>
-          <strong>{job.stage === 'idea' ? 'الفكرة' : job.stage === 'script' ? 'السكريبت' : job.stage}</strong>
+          <strong>{job.stage === 'idea' ? 'الفكرة' : job.stage === 'script' ? 'السكريبت' : job.stage === 'tts' ? 'التعليق الصوتي' : job.stage}</strong>
         </div>
         {job.active_provider && <span className="provider-pill">{job.active_provider}</span>}
       </div>
 
       {job.error ? (
         <div className="generation-error">{job.error}</div>
+      ) : job.stage === 'tts' && output?.audio_url ? (
+        <div className="audio-result">
+          <audio controls preload="metadata" src={resolveWorkerUrl(output.audio_url)} />
+          <div>
+            <span>الصوت</span><strong>{output.voice}</strong>
+            <span>الحجم</span><strong>{output.size_bytes ? prettySize(output.size_bytes) : '—'}</strong>
+          </div>
+        </div>
       ) : entries.length ? (
         <div className="generation-fields">
           {entries.map(([key, value]) => (
@@ -113,6 +127,7 @@ export function App() {
   const [ideaPrompt, setIdeaPrompt] = useState('');
   const [references, setReferences] = useState<UploadedReference[]>([]);
   const [preferences, setPreferences] = useState<ReferencePreferences>(defaultPreferences);
+  const [ttsVoice, setTtsVoice] = useState('ar-EG-SalmaNeural');
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -181,6 +196,8 @@ export function App() {
         reference_mode: references.length ? 'adapt_style_to_new_idea' : 'none',
         reference_ids: references.map((reference) => reference.id),
         reference_preferences: preferences,
+        tts_voice: ttsVoice,
+        tts_rate: '+0%',
       }));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'تعذر بدء المهمة. تأكد أن الـ Worker يعمل.');
@@ -311,6 +328,23 @@ export function App() {
               <div className="range-labels"><span>15 ثانية</span><span>5 دقائق</span></div>
             </div>
 
+            <div className="field-group">
+              <div className="field-heading"><div><span className="field-index">6</span><strong>الصوت</strong></div><span className="auto-pill">مجاني</span></div>
+              <div className="voice-grid">
+                {voiceOptions.map((voice) => (
+                  <button
+                    type="button"
+                    key={voice.id}
+                    className={`voice-card ${ttsVoice === voice.id ? 'selected' : ''}`}
+                    onClick={() => setTtsVoice(voice.id)}
+                  >
+                    <strong>{voice.label}</strong>
+                    <span>{voice.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <label className="review-toggle">
               <div>
                 <strong>مراجعة كل مرحلة قبل الاستمرار</strong>
@@ -338,6 +372,7 @@ export function App() {
               <div><dt>الدقة</dt><dd>{selectedPlatform.resolution}</dd></div>
               <div><dt>نوع المحتوى</dt><dd>{contentType}</dd></div>
               <div><dt>المدة</dt><dd>{duration} ثانية</dd></div>
+              <div><dt>الصوت</dt><dd>{voiceOptions.find((voice) => voice.id === ttsVoice)?.label}</dd></div>
               <div><dt>المراجعة</dt><dd>{reviewEachStage ? 'مفعّلة' : 'تلقائي بالكامل'}</dd></div>
               <div><dt>المراجع</dt><dd>{references.length ? `${references.length} ملف` : 'بدون'}</dd></div>
             </dl>
