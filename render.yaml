@@ -17,6 +17,10 @@ services:
         value: ffmpeg
       - key: FFPROBE_BINARY
         value: ffprobe
+      - key: SUPABASE_URL
+        value: https://avmcavsqeahcepfwsoun.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: JOB_DB_PATH
         value: data/ai_content_studio.db
       - key: REFERENCE_DB_PATH
