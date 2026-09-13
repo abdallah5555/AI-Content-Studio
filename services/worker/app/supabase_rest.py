@@ -85,14 +85,16 @@ def delete(table: str, filters: dict[str, str]) -> None:
     request_json("DELETE", f"/rest/v1/{table}", query=filters, prefer="return=minimal")
 
 
-def upload_file(bucket: str, object_path: str, source: str | Path, *, content_type: str = "application/octet-stream") -> str:
-    source_path = Path(source)
-    data = source_path.read_bytes()
+def _object_url(bucket: str, object_path: str) -> str:
     encoded_path = "/".join(urllib_parse.quote(part, safe="") for part in object_path.split("/"))
-    url = f"{_base_url()}/storage/v1/object/{urllib_parse.quote(bucket, safe='')}/{encoded_path}"
+    return f"{_base_url()}/storage/v1/object/{urllib_parse.quote(bucket, safe='')}/{encoded_path}"
+
+
+def upload_file(bucket: str, object_path: str, source: str | Path, *, content_type: str = "application/octet-stream") -> str:
+    data = Path(source).read_bytes()
     headers = _headers(content_type=content_type)
     headers["x-upsert"] = "true"
-    req = urllib_request.Request(url, data=data, headers=headers, method="POST")
+    req = urllib_request.Request(_object_url(bucket, object_path), data=data, headers=headers, method="POST")
     try:
         with urllib_request.urlopen(req, timeout=180) as response:
             response.read()
@@ -102,3 +104,18 @@ def upload_file(bucket: str, object_path: str, source: str | Path, *, content_ty
     except URLError as exc:
         raise RuntimeError(f"Supabase storage network error: {exc.reason}") from exc
     return f"{bucket}/{object_path}"
+
+
+def download_file(bucket: str, object_path: str, destination: str | Path) -> Path:
+    target = Path(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    req = urllib_request.Request(_object_url(bucket, object_path), headers=_headers(), method="GET")
+    try:
+        with urllib_request.urlopen(req, timeout=180) as response:
+            target.write_bytes(response.read())
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Supabase storage HTTP {exc.code}: {detail[:800]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Supabase storage network error: {exc.reason}") from exc
+    return target
