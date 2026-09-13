@@ -28,9 +28,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - name: Compile worker
         run: python -m compileall -q services/worker/app
       - name: Verify FFmpeg
         run: |
           ffmpeg -version | head -n 1
+          ffmpeg -filters | grep -E ' subtitles | ass '
           PYTHONPATH=services/worker python -c "from app.video_edit import ffmpeg_available; assert ffmpeg_available(), 'FFmpeg not available'"
