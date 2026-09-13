@@ -7,10 +7,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .generation import generate_idea, generate_script
 from .providers import router as providers_router
 from .reference_analysis import REFERENCE_FILES, router as references_router
 
-app = FastAPI(title="AI Content Studio Worker", version="0.4.0")
+app = FastAPI(title="AI Content Studio Worker", version="0.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,11 +85,48 @@ def reference_summary(payload: CreateJobRequest) -> str | None:
     if not references:
         return "تم تحديد مراجع بصرية لكن ملفاتها غير متاحة حاليًا."
 
+    ready_count = sum(1 for ref in references if ref.analysis_status == "ready")
     types = sorted({ref.kind for ref in references})
     return (
-        f"تم ربط {len(references)} مرجع بصري ({' + '.join(types)}). "
-        "سيتم استخدامه لفهم الروح البصرية والتكوين والحركة المختارة، ثم تطبيقها على الفكرة الجديدة بدون نسخ المحتوى نفسه."
+        f"تم ربط {len(references)} مرجع بصري ({' + '.join(types)}), وتم تحليل {ready_count} منها. "
+        "سيتم استخدام السمات البصرية القابلة لإعادة الاستخدام فقط، ثم تطبيقها على الفكرة الجديدة بدون نسخ المحتوى نفسه."
     )
+
+
+def stage_output_for(job: dict[str, Any], stage: Stage) -> dict[str, Any] | None:
+    return job.get("outputs", {}).get(stage.value)
+
+
+async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
+    payload = job["input"]
+
+    if stage == Stage.IDEA:
+        result = await asyncio.to_thread(generate_idea, payload)
+        job["outputs"][Stage.IDEA.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = result.get("failover_log", [])
+        return
+
+    if stage == Stage.SCRIPT:
+        idea_result = stage_output_for(job, Stage.IDEA)
+        if not idea_result:
+            raise RuntimeError("Script generation requires a completed idea stage")
+        result = await asyncio.to_thread(generate_script, payload, idea_result.get("content", {}))
+        job["outputs"][Stage.SCRIPT.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = result.get("failover_log", [])
+        return
+
+    # TTS/media/edit/export providers are connected in later phases.
+    await asyncio.sleep(1.0)
+    placeholder = {
+        "status": "prepared",
+        "message": f"{STAGE_MESSAGES[stage]} — موصل التنفيذ الفعلي لهذه المرحلة سيضاف في المرحلة التالية.",
+    }
+    job["outputs"][stage.value] = placeholder
+    job["stage_output"] = placeholder
 
 
 async def run_pipeline(job_id: str, start_index: int = 0) -> None:
@@ -103,9 +141,16 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
         job["progress"] = round(index / len(STAGES) * 100)
         job["message"] = STAGE_MESSAGES[stage]
         job["_next_stage_index"] = index
+        job["error"] = None
 
-        # Placeholder processing. Real AI/video providers are connected stage-by-stage.
-        await asyncio.sleep(1.2)
+        try:
+            await execute_stage(job, stage)
+        except Exception as exc:
+            job["status"] = "failed"
+            job["message"] = f"فشلت مرحلة {stage.value}"
+            job["error"] = str(exc)
+            job["_next_stage_index"] = index
+            return
 
         job["progress"] = round((index + 1) / len(STAGES) * 100)
 
@@ -133,6 +178,21 @@ async def create_job(payload: CreateJobRequest):
     if missing_reference_ids:
         raise HTTPException(status_code=400, detail={"missing_reference_ids": missing_reference_ids})
 
+    if payload.reference_mode == "adapt_style_to_new_idea":
+        not_ready = [
+            ref_id
+            for ref_id in payload.reference_ids
+            if REFERENCE_FILES[ref_id].analysis_status != "ready"
+        ]
+        if not_ready:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Reference analysis must finish before generation",
+                    "not_ready_reference_ids": not_ready,
+                },
+            )
+
     job_id = str(uuid4())
     job = {
         "id": job_id,
@@ -142,6 +202,11 @@ async def create_job(payload: CreateJobRequest):
         "input": payload.model_dump(),
         "message": "تمت إضافة المهمة إلى خط الإنتاج",
         "reference_summary": reference_summary(payload),
+        "outputs": {},
+        "stage_output": None,
+        "active_provider": None,
+        "provider_failover_log": [],
+        "error": None,
         "_next_stage_index": 0,
     }
     jobs[job_id] = job
@@ -155,6 +220,19 @@ def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return public_job(job)
+
+
+@app.get("/jobs/{job_id}/outputs")
+def get_job_outputs(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "id": job_id,
+        "outputs": job.get("outputs", {}),
+        "active_provider": job.get("active_provider"),
+        "provider_failover_log": job.get("provider_failover_log", []),
+    }
 
 
 @app.post("/jobs/{job_id}/approve")
