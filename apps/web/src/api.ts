@@ -136,6 +136,35 @@ export type IdeaInboxItem = {
   updated_at: string;
 };
 
+export type ProviderStatus = {
+  id: string;
+  label: string;
+  capability: string;
+  priority: number;
+  configured: boolean;
+};
+
+export type ProviderStatusResponse = {
+  providers: ProviderStatus[];
+  failover_order: { text: string[]; media: string[] };
+  ready: { text: boolean; media: boolean };
+  active: { text: string | null; media: string | null };
+};
+
+export type MusicTrack = { name: string; size_bytes: number };
+
+export type ScheduledItem = {
+  id: string;
+  job_id: string;
+  platform: string;
+  scheduled_at: string;
+  title: string;
+  notes: string;
+  status: 'planned' | 'ready' | 'published' | 'cancelled' | string;
+  created_at: string;
+  updated_at: string;
+};
+
 const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 export function resolveWorkerUrl(path: string): string {
@@ -159,17 +188,12 @@ export async function uploadReference(file: File): Promise<UploadedReference> {
   const body = new FormData();
   body.append('file', file);
   const uploaded = await parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, { method: 'POST', body }));
-  try {
-    return await analyzeReference(uploaded.id);
-  } catch (error) {
-    return { ...uploaded, analysis_status: 'failed', analysis_error: error instanceof Error ? error.message : 'Reference analysis failed' };
-  }
+  try { return await analyzeReference(uploaded.id); }
+  catch (error) { return { ...uploaded, analysis_status: 'failed', analysis_error: error instanceof Error ? error.message : 'Reference analysis failed' }; }
 }
 
 export async function createJob(payload: CreateJobPayload): Promise<JobStatus> {
-  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  }));
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }));
 }
 
 export async function listJobs(limit = 50): Promise<JobSummary[]> {
@@ -194,9 +218,7 @@ export async function regenerateJobStage(jobId: string, stage: string): Promise<
 }
 
 export async function editJobStage(jobId: string, stage: string, content: Record<string, unknown>): Promise<JobStatus> {
-  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
-  }));
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }));
 }
 
 export async function getTrends(geo = 'EG', limit = 30): Promise<TrendItem[]> {
@@ -215,23 +237,16 @@ export async function listTrendWatchlist(): Promise<TrendItem[]> {
 }
 
 export async function watchTrend(trend: TrendItem, geo = 'EG'): Promise<void> {
-  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/watchlist`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trend, geo }),
-  }));
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/watchlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trend, geo }) }));
 }
 
 export async function unwatchTrend(key: string): Promise<void> {
   await parseResponse(await fetch(`${workerBaseUrl}/intelligence/watchlist/${encodeURIComponent(key)}`, { method: 'DELETE' }));
 }
 
-export async function runIntelligenceTool(
-  tool: string,
-  input: string,
-  options: { context?: Record<string, unknown>; language?: string; platform?: string; audience?: string } = {},
-): Promise<IntelligenceResult> {
+export async function runIntelligenceTool(tool: string, input: string, options: { context?: Record<string, unknown>; language?: string; platform?: string; audience?: string } = {}): Promise<IntelligenceResult> {
   return parseResponse<IntelligenceResult>(await fetch(`${workerBaseUrl}/intelligence/generate/${tool}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ input, context: options.context || {}, language: options.language || 'ar-EG', platform: options.platform || null, audience: options.audience || null }),
   }));
 }
@@ -242,9 +257,7 @@ export async function listIdeaInbox(): Promise<IdeaInboxItem[]> {
 }
 
 export async function addIdeaInbox(text: string, tags: string[] = []): Promise<IdeaInboxItem> {
-  const result = await parseResponse<{ idea: IdeaInboxItem }>(await fetch(`${workerBaseUrl}/intelligence/inbox`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, tags }),
-  }));
+  const result = await parseResponse<{ idea: IdeaInboxItem }>(await fetch(`${workerBaseUrl}/intelligence/inbox`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, tags }) }));
   return result.idea;
 }
 
@@ -258,13 +271,43 @@ export async function getBrandProfile(): Promise<Record<string, unknown>> {
 }
 
 export async function saveBrandProfile(profile: Record<string, unknown>): Promise<void> {
-  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/brand`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile }),
-  }));
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/brand`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile }) }));
 }
 
 export async function recordPerformance(payload: Record<string, unknown>): Promise<void> {
-  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/performance`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  }));
+  await parseResponse(await fetch(`${workerBaseUrl}/intelligence/performance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }));
+}
+
+export async function getProviderStatus(): Promise<ProviderStatusResponse> {
+  return parseResponse<ProviderStatusResponse>(await fetch(`${workerBaseUrl}/providers/status`));
+}
+
+export async function getMusicLibrary(): Promise<MusicTrack[]> {
+  const result = await parseResponse<{ tracks: MusicTrack[] }>(await fetch(`${workerBaseUrl}/music/library`));
+  return result.tracks;
+}
+
+export async function uploadMusic(file: File): Promise<void> {
+  const body = new FormData();
+  body.append('file', file);
+  await parseResponse(await fetch(`${workerBaseUrl}/music/library`, { method: 'POST', body }));
+}
+
+export async function listSchedule(): Promise<ScheduledItem[]> {
+  const result = await parseResponse<{ items: ScheduledItem[] }>(await fetch(`${workerBaseUrl}/schedule`));
+  return result.items;
+}
+
+export async function createSchedule(payload: { job_id: string; platform: string; scheduled_at: string; title?: string; notes?: string }): Promise<ScheduledItem> {
+  const result = await parseResponse<{ item: ScheduledItem }>(await fetch(`${workerBaseUrl}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }));
+  return result.item;
+}
+
+export async function updateScheduleStatus(id: string, status: string): Promise<ScheduledItem> {
+  const result = await parseResponse<{ item: ScheduledItem }>(await fetch(`${workerBaseUrl}/schedule/${encodeURIComponent(id)}/status?status=${encodeURIComponent(status)}`, { method: 'PATCH' }));
+  return result.item;
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  await parseResponse(await fetch(`${workerBaseUrl}/schedule/${encodeURIComponent(id)}`, { method: 'DELETE' }));
 }
