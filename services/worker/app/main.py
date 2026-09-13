@@ -5,13 +5,16 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .generation import generate_idea, generate_script
 from .providers import router as providers_router
 from .reference_analysis import REFERENCE_FILES, router as references_router
+from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
+from .tts import generate_tts, router as tts_router
 
-app = FastAPI(title="AI Content Studio Worker", version="0.5.0")
+app = FastAPI(title="AI Content Studio Worker", version="0.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +25,8 @@ app.add_middleware(
 )
 app.include_router(providers_router)
 app.include_router(references_router)
+app.include_router(tts_router)
+app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
 
 
 class Stage(str, Enum):
@@ -40,7 +45,7 @@ STAGES = list(Stage)
 STAGE_MESSAGES = {
     Stage.IDEA: "جاري توليد فكرة جديدة وغير مكررة",
     Stage.SCRIPT: "جاري كتابة السكربت والخطاف",
-    Stage.TTS: "جاري تجهيز التعليق الصوتي",
+    Stage.TTS: "جاري تحويل السكربت إلى تعليق صوتي",
     Stage.MEDIA: "جاري اختيار المشاهد المناسبة",
     Stage.EDIT: "جاري تركيب الفيديو والمزامنة",
     Stage.EFFECTS: "جاري إضافة الانتقالات والمؤثرات",
@@ -68,6 +73,8 @@ class CreateJobRequest(BaseModel):
     reference_mode: Literal["none", "adapt_style_to_new_idea"] = "none"
     reference_ids: list[str] = []
     reference_preferences: ReferencePreferences = ReferencePreferences()
+    tts_voice: str = "ar-EG-SalmaNeural"
+    tts_rate: str = "+0%"
 
 
 jobs: dict[str, dict[str, Any]] = {}
@@ -119,7 +126,23 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         job["provider_failover_log"] = result.get("failover_log", [])
         return
 
-    # TTS/media/edit/export providers are connected in later phases.
+    if stage == Stage.TTS:
+        script_result = stage_output_for(job, Stage.SCRIPT)
+        if not script_result:
+            raise RuntimeError("TTS generation requires a completed script stage")
+        result = await generate_tts(
+            script_result,
+            voice=payload.get("tts_voice") or None,
+            rate=payload.get("tts_rate") or None,
+        )
+        result["audio_url"] = f"/media/tts/{result['audio_id']}.mp3"
+        job["outputs"][Stage.TTS.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = []
+        return
+
+    # Media/edit/effects/music/export/SEO connectors are added stage-by-stage.
     await asyncio.sleep(1.0)
     placeholder = {
         "status": "prepared",
