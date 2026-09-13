@@ -98,8 +98,8 @@ test('scheduler loads completed projects and scheduling controls', async ({ page
 test('service center reports provider readiness and music library', async ({ page }) => {
   await page.getByRole('button', { name: /مصادر الخدمات/ }).click();
   await expect(page.getByRole('heading', { name: /مصادر الخدمات/ })).toBeVisible();
-  await expect(page.getByText('Google Gemini')).toBeVisible();
-  await expect(page.getByText('Pexels')).toBeVisible();
+  await expect(page.getByText('Google Gemini', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pexels', { exact: true })).toBeVisible();
   await expect(page.getByText(/المكتبة فاضية/)).toBeVisible();
 });
 
