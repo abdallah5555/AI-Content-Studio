@@ -3,6 +3,8 @@ import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
+  Download,
+  ExternalLink,
   Film,
   ImagePlus,
   KeyRound,
@@ -26,6 +28,22 @@ import { contentTypes, pipelineStages, platforms, type PlatformId } from './cont
 
 type View = 'dashboard' | 'create';
 type PreferenceKey = keyof ReferencePreferences;
+
+type MediaSelection = {
+  scene?: number;
+  seconds?: number;
+  visual?: string;
+  caption?: string;
+  search_query?: string;
+  media?: {
+    provider?: string;
+    preview_url?: string;
+    download_url?: string;
+    page_url?: string;
+    creator?: string;
+    attribution?: string;
+  };
+};
 
 const cards = [
   { title: 'فيديو جديد', subtitle: 'ابدأ من فكرة حتى التصدير', icon: Plus, primary: true, action: 'create' as const },
@@ -55,7 +73,8 @@ const voiceOptions = [
   { id: 'ar-EG-ShakirNeural', label: 'شاكر', hint: 'صوت ذكر عربي مصري' },
 ];
 
-function prettySize(bytes: number) {
+function prettySize(bytes?: number) {
+  if (!bytes) return '—';
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
@@ -66,19 +85,85 @@ function prettyValue(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function MediaOutput({ job }: { job: JobStatus }) {
+  const content = job.stage_output?.content ?? {};
+  const selections = Array.isArray(content.selections) ? content.selections as MediaSelection[] : [];
+  if (!selections.length) return null;
+
+  return (
+    <div className="media-output-grid">
+      {selections.map((selection, index) => (
+        <article className="media-output-card" key={`${selection.scene ?? index}-${selection.search_query ?? index}`}>
+          {selection.media?.preview_url ? (
+            <img src={selection.media.preview_url} alt={selection.visual || `Scene ${index + 1}`} loading="lazy" />
+          ) : (
+            <div className="media-placeholder"><Film size={24} /></div>
+          )}
+          <div className="media-output-body">
+            <div className="media-output-meta">
+              <span>مشهد {selection.scene ?? index + 1}</span>
+              <span>{selection.seconds ?? '—'} ث</span>
+            </div>
+            <strong>{selection.visual || selection.search_query || 'مشهد مقترح'}</strong>
+            {selection.caption && <p>{selection.caption}</p>}
+            <small>{selection.media?.provider || 'media'} · {selection.media?.creator || 'مكتبة الوسائط'}</small>
+            {selection.media?.page_url && (
+              <a href={selection.media.page_url} target="_blank" rel="noreferrer">
+                عرض المصدر <ExternalLink size={13} />
+              </a>
+            )}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function VideoOutput({ job }: { job: JobStatus }) {
+  const output = job.stage_output;
+  const path = (output?.video_url || output?.download_url) as string | undefined;
+  if (!path) return null;
+  const url = resolveWorkerUrl(path);
+
+  return (
+    <div className="video-output">
+      <video controls preload="metadata" src={url} />
+      <div className="video-output-info">
+        <strong>{job.stage === 'export' ? 'الفيديو النهائي' : 'معاينة الفيديو'}</strong>
+        <span>{prettySize(output?.size_bytes)}</span>
+        {output?.warning && <small>{String(output.warning)}</small>}
+        <a className="download-link" href={url} download={output?.filename as string | undefined}>
+          <Download size={16} /> تنزيل MP4
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function GenerationOutput({ job }: { job: JobStatus }) {
   const output = job.stage_output;
   if (!output && !job.error) return null;
 
   const content = output?.content ?? {};
-  const entries = Object.entries(content);
+  const entries = Object.entries(content).filter(([key]) => key !== 'selections');
+  const isVideoStage = ['edit', 'effects', 'music', 'export'].includes(job.stage);
 
   return (
     <section className={`generation-output ${job.error ? 'generation-output-error' : ''}`}>
       <div className="generation-output-head">
         <div>
           <span className="eyebrow">ناتج المرحلة الحالية</span>
-          <strong>{job.stage === 'idea' ? 'الفكرة' : job.stage === 'script' ? 'السكريبت' : job.stage === 'tts' ? 'التعليق الصوتي' : job.stage}</strong>
+          <strong>{
+            job.stage === 'idea' ? 'الفكرة' :
+            job.stage === 'script' ? 'السكريبت' :
+            job.stage === 'tts' ? 'التعليق الصوتي' :
+            job.stage === 'media' ? 'المشاهد المختارة' :
+            job.stage === 'edit' ? 'المونتاج' :
+            job.stage === 'effects' ? 'الكابشن والمؤثرات' :
+            job.stage === 'music' ? 'الموسيقى' :
+            job.stage === 'export' ? 'التصدير النهائي' :
+            job.stage === 'seo' ? 'بيانات النشر وSEO' : job.stage
+          }</strong>
         </div>
         {job.active_provider && <span className="provider-pill">{job.active_provider}</span>}
       </div>
@@ -89,10 +174,14 @@ function GenerationOutput({ job }: { job: JobStatus }) {
         <div className="audio-result">
           <audio controls preload="metadata" src={resolveWorkerUrl(output.audio_url)} />
           <div>
-            <span>الصوت</span><strong>{output.voice}</strong>
-            <span>الحجم</span><strong>{output.size_bytes ? prettySize(output.size_bytes) : '—'}</strong>
+            <span>الصوت</span><strong>{String(output.voice || '—')}</strong>
+            <span>الحجم</span><strong>{prettySize(output.size_bytes)}</strong>
           </div>
         </div>
+      ) : job.stage === 'media' ? (
+        <MediaOutput job={job} />
+      ) : isVideoStage ? (
+        <VideoOutput job={job} />
       ) : entries.length ? (
         <div className="generation-fields">
           {entries.map(([key, value]) => (
@@ -103,15 +192,13 @@ function GenerationOutput({ job }: { job: JobStatus }) {
           ))}
         </div>
       ) : output?.message ? (
-        <p className="generation-message">{output.message}</p>
+        <p className="generation-message">{String(output.message)}</p>
       ) : null}
 
       {job.provider_failover_log && job.provider_failover_log.length > 0 && (
         <details className="failover-details">
-          <summary>تفاصيل التحويل بين مزودي الذكاء الاصطناعي</summary>
-          <ul>
-            {job.provider_failover_log.map((item) => <li key={item}>{item}</li>)}
-          </ul>
+          <summary>تفاصيل التحويل بين المزودين</summary>
+          <ul>{job.provider_failover_log.map((item) => <li key={item}>{item}</li>)}</ul>
         </details>
       )}
     </section>
@@ -145,7 +232,7 @@ export function App() {
       try {
         setJob(await getJob(job.id));
       } catch {
-        // Preserve the last known state during temporary worker/network interruptions.
+        // Keep the last known state during temporary network interruptions.
       }
     }, 1200);
     return () => window.clearInterval(timer);
@@ -176,10 +263,8 @@ export function App() {
       setError('اكتب الفكرة التي تريد تنفيذها أولًا.');
       return;
     }
-
-    const failedReferences = references.filter((reference) => reference.analysis_status === 'failed');
-    if (failedReferences.length) {
-      setError('يوجد مرجع لم يكتمل تحليله. احذف المرجع أو أصلح إعداد Gemini قبل بدء التوليد.');
+    if (references.some((reference) => reference.analysis_status === 'failed')) {
+      setError('يوجد مرجع لم يكتمل تحليله. أصلح إعداد Gemini أو ارفع مرجعًا آخر.');
       return;
     }
 
@@ -198,9 +283,10 @@ export function App() {
         reference_preferences: preferences,
         tts_voice: ttsVoice,
         tts_rate: '+0%',
+        music_volume: 0.12,
       }));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'تعذر بدء المهمة. تأكد أن الـ Worker يعمل.');
+      setError(requestError instanceof Error ? requestError.message : 'تعذر بدء المهمة. تأكد أن الـWorker يعمل.');
     } finally {
       setSubmitting(false);
     }
@@ -229,7 +315,7 @@ export function App() {
         <section className="create-heading">
           <div className="brand-badge"><Sparkles size={18} /> إنشاء محتوى جديد</div>
           <h1>اكتب فكرتك، ولو عندك مرجع بصري ارفعه.</h1>
-          <p>ممكن ترفع صورة أو فيديو ذكاء اصطناعي عجبك، والأداة تستخدم نفس الروح البصرية على فكرة جديدة أنت تحددها.</p>
+          <p>الأداة تقدر تحلل صورة أو فيديو مرجعي، ثم تبني فكرة وسكربت ومشاهد جديدة بنفس الروح البصرية.</p>
         </section>
 
         <div className="creator-layout">
@@ -261,13 +347,7 @@ export function App() {
 
             <div className="field-group">
               <div className="field-heading"><div><span className="field-index">3</span><strong>الفكرة الجديدة</strong></div></div>
-              <textarea
-                className="prompt-area"
-                value={ideaPrompt}
-                onChange={(event) => setIdeaPrompt(event.target.value)}
-                rows={5}
-                placeholder="مثال: عايز فيديو عن فوائد شرب المياه، لكن بنفس روح وأسلوب المرجع اللي رفعته."
-              />
+              <textarea className="prompt-area" value={ideaPrompt} onChange={(event) => setIdeaPrompt(event.target.value)} rows={5} placeholder="مثال: عايز فيديو عن فوائد شرب المياه بنفس روح المرجع اللي رفعته." />
             </div>
 
             <div className="field-group">
@@ -275,13 +355,12 @@ export function App() {
                 <div><span className="field-index">4</span><strong>مرجع بصري اختياري</strong></div>
                 <span className="auto-pill">صورة أو فيديو</span>
               </div>
-
               <label className="upload-box">
                 <input type="file" accept="image/*,video/*" multiple onChange={handleReferenceFiles} disabled={uploading} />
                 {uploading ? <LoaderCircle className="spin" size={24} /> : <ImagePlus size={24} />}
                 <div>
                   <strong>{uploading ? 'جاري رفع وتحليل المرجع...' : 'ارفع صورة أو فيديو كمرجع'}</strong>
-                  <span>الحد الحالي 100MB لكل ملف. الملفات تذهب للـWorker ولا يتم وضعها داخل GitHub.</span>
+                  <span>الحد الحالي 100MB لكل ملف، والملفات تذهب للـWorker ولا تدخل GitHub.</span>
                 </div>
               </label>
 
@@ -291,12 +370,7 @@ export function App() {
                     <div className="reference-item" key={reference.id}>
                       <div>
                         <strong>{reference.name}</strong>
-                        <span>
-                          {reference.kind === 'video' ? 'فيديو' : 'صورة'} · {prettySize(reference.size_bytes)} · {
-                            reference.analysis_status === 'ready' ? 'تم التحليل' :
-                            reference.analysis_status === 'failed' ? 'فشل التحليل' : 'جاري التحليل'
-                          }
-                        </span>
+                        <span>{reference.kind === 'video' ? 'فيديو' : 'صورة'} · {prettySize(reference.size_bytes)} · {reference.analysis_status === 'ready' ? 'تم التحليل' : reference.analysis_status === 'failed' ? 'فشل التحليل' : 'جاري التحليل'}</span>
                       </div>
                       {reference.analysis_status === 'ready' && <CheckCircle2 size={18} />}
                     </div>
@@ -306,14 +380,8 @@ export function App() {
 
               <div className="preferences-grid">
                 {preferenceOptions.map((option) => (
-                  <button
-                    type="button"
-                    key={option.key}
-                    className={`preference-card ${preferences[option.key] ? 'selected' : ''}`}
-                    onClick={() => togglePreference(option.key)}
-                  >
-                    <strong>{option.label}</strong>
-                    <span>{option.hint}</span>
+                  <button type="button" key={option.key} className={`preference-card ${preferences[option.key] ? 'selected' : ''}`} onClick={() => togglePreference(option.key)}>
+                    <strong>{option.label}</strong><span>{option.hint}</span>
                   </button>
                 ))}
               </div>
@@ -332,29 +400,19 @@ export function App() {
               <div className="field-heading"><div><span className="field-index">6</span><strong>الصوت</strong></div><span className="auto-pill">مجاني</span></div>
               <div className="voice-grid">
                 {voiceOptions.map((voice) => (
-                  <button
-                    type="button"
-                    key={voice.id}
-                    className={`voice-card ${ttsVoice === voice.id ? 'selected' : ''}`}
-                    onClick={() => setTtsVoice(voice.id)}
-                  >
-                    <strong>{voice.label}</strong>
-                    <span>{voice.hint}</span>
+                  <button type="button" key={voice.id} className={`voice-card ${ttsVoice === voice.id ? 'selected' : ''}`} onClick={() => setTtsVoice(voice.id)}>
+                    <strong>{voice.label}</strong><span>{voice.hint}</span>
                   </button>
                 ))}
               </div>
             </div>
 
             <label className="review-toggle">
-              <div>
-                <strong>مراجعة كل مرحلة قبل الاستمرار</strong>
-                <span>عند التفعيل، يتوقف خط الإنتاج بعد كل مرحلة حتى توافق أو تعدّل النتيجة.</span>
-              </div>
+              <div><strong>مراجعة كل مرحلة قبل الاستمرار</strong><span>تقدر تشوف الفكرة والسكريبت والصوت والمشاهد والفيديو قبل الانتقال للمرحلة التالية.</span></div>
               <input type="checkbox" checked={reviewEachStage} onChange={(event) => setReviewEachStage(event.target.checked)} />
             </label>
 
             {error && <div className="error-box">{error}</div>}
-
             <button className="cta wide-cta" onClick={startJob} disabled={submitting || uploading || Boolean(job && !['completed', 'failed'].includes(job.status))}>
               {submitting ? <LoaderCircle className="spin" size={19} /> : <Film size={19} />}
               {job ? 'المهمة قيد التنفيذ' : 'ابدأ صناعة الفيديو'}
@@ -364,10 +422,7 @@ export function App() {
           <aside className="summary-card">
             <span className="eyebrow">ملخص الإعداد</span>
             <h2>{selectedPlatform.label}</h2>
-            <div className="preview-frame" data-ratio={selectedPlatform.aspectRatio}>
-              <Film size={28} />
-              <span>{selectedPlatform.aspectRatio}</span>
-            </div>
+            <div className="preview-frame" data-ratio={selectedPlatform.aspectRatio}><Film size={28} /><span>{selectedPlatform.aspectRatio}</span></div>
             <dl className="summary-list">
               <div><dt>الدقة</dt><dd>{selectedPlatform.resolution}</dd></div>
               <div><dt>نوع المحتوى</dt><dd>{contentType}</dd></div>
@@ -376,37 +431,24 @@ export function App() {
               <div><dt>المراجعة</dt><dd>{reviewEachStage ? 'مفعّلة' : 'تلقائي بالكامل'}</dd></div>
               <div><dt>المراجع</dt><dd>{references.length ? `${references.length} ملف` : 'بدون'}</dd></div>
             </dl>
-            <div className="reference-mode-card">
-              <WandSparkles size={18} />
-              <div><strong>Reference-to-Idea</strong><span>نفس الروح البصرية على فكرة مختلفة.</span></div>
-            </div>
+            <div className="reference-mode-card"><WandSparkles size={18} /><div><strong>Reference-to-Idea</strong><span>نفس الروح البصرية على فكرة مختلفة.</span></div></div>
           </aside>
         </div>
 
         {job && (
           <section className="job-card">
             <div className="job-head">
-              <div>
-                <span className="eyebrow">المهمة {job.id.slice(0, 8)}</span>
-                <h2>{job.message}</h2>
-              </div>
+              <div><span className="eyebrow">المهمة {job.id.slice(0, 8)}</span><h2>{job.message}</h2></div>
               <strong className="progress-number">{job.progress}%</strong>
             </div>
-
             {job.reference_summary && <div className="reference-summary">{job.reference_summary}</div>}
             <div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div>
-
             <div className="pipeline live-pipeline">
               {pipelineStages.map((stage, index) => {
                 const currentIndex = pipelineStages.findIndex((item) => item.key === job.stage);
                 const done = index < currentIndex || job.status === 'completed' || (job.status === 'waiting_review' && index === currentIndex);
                 const active = index === currentIndex && !done;
-                return (
-                  <div className={`step ${done ? 'done' : ''} ${active ? 'active' : ''}`} key={stage.key}>
-                    <span>{done ? <CheckCircle2 size={15} /> : index + 1}</span>
-                    <strong>{stage.label}</strong>
-                  </div>
-                );
+                return <div className={`step ${done ? 'done' : ''} ${active ? 'active' : ''}`} key={stage.key}><span>{done ? <CheckCircle2 size={15} /> : index + 1}</span><strong>{stage.label}</strong></div>;
               })}
             </div>
 
@@ -414,10 +456,9 @@ export function App() {
 
             {job.status === 'waiting_review' && (
               <div className="review-action">
-                <div><strong>المرحلة الحالية جاهزة للمراجعة</strong><span>راجع الناتج بالأعلى، ثم وافق للاستمرار للمرحلة التالية.</span></div>
+                <div><strong>المرحلة الحالية جاهزة للمراجعة</strong><span>راجع الناتج بالأعلى، ثم وافق للاستمرار.</span></div>
                 <button className="cta" onClick={continueAfterReview} disabled={approving}>
-                  {approving ? <LoaderCircle className="spin" size={18} /> : <CheckCircle2 size={18} />}
-                  موافقة والاستمرار
+                  {approving ? <LoaderCircle className="spin" size={18} /> : <CheckCircle2 size={18} />} موافقة والاستمرار
                 </button>
               </div>
             )}
@@ -432,27 +473,19 @@ export function App() {
       <section className="hero">
         <div className="brand-badge"><Sparkles size={18} /> AI Content Studio</div>
         <h1>حوّل فكرة واحدة إلى فيديو جاهز للنشر.</h1>
-        <p>من السكربت والصوت إلى المشاهد والمونتاج، ومع إمكانية الاستلهام من صورة أو فيديو مرجعي.</p>
+        <p>من الفكرة والسكريبت والصوت إلى المشاهد والمونتاج والتصدير وSEO، مع إمكانية الاستلهام من صورة أو فيديو مرجعي.</p>
         <button className="cta" onClick={() => setView('create')}><Film size={19} /> إنشاء فيديو جديد</button>
       </section>
-
       <section className="grid">
         {cards.map(({ title, subtitle, icon: Icon, primary, action }) => (
           <button type="button" className={`card ${primary ? 'card-primary' : ''}`} key={title} onClick={() => action === 'create' && setView('create')}>
-            <div className="icon-wrap"><Icon size={24} /></div>
-            <h2>{title}</h2>
-            <p>{subtitle}</p>
+            <div className="icon-wrap"><Icon size={24} /></div><h2>{title}</h2><p>{subtitle}</p>
           </button>
         ))}
       </section>
-
       <section className="pipeline-card">
         <div><span className="eyebrow">خط الإنتاج</span><h2>٩ مراحل من الفكرة للنشر</h2></div>
-        <div className="pipeline">
-          {pipelineStages.map((step, index) => (
-            <div className="step" key={step.key}><span>{index + 1}</span><strong>{step.label}</strong></div>
-          ))}
-        </div>
+        <div className="pipeline">{pipelineStages.map((step, index) => <div className="step" key={step.key}><span>{index + 1}</span><strong>{step.label}</strong></div>)}</div>
       </section>
     </main>
   );
