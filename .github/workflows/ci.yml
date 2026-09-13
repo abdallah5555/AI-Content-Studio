@@ -21,6 +21,10 @@ jobs:
         run: npm run lint
       - name: Build web app
         run: npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser E2E
+        run: npm --workspace apps/web run e2e
 
   intelligence:
     name: Content intelligence contract
