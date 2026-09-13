@@ -35,6 +35,12 @@ def export_video(
     destination = EXPORT_ROOT / filename
     shutil.copy2(source, destination)
 
+    media_attributions = [
+        item for item in (script_result.get("media_attributions") or []) if isinstance(item, dict)
+    ]
+    music_track = str(source_result.get("track") or "").strip() or None
+    music_applied = bool(source_result.get("music_applied"))
+
     return {
         "provider": "local-export",
         "export_id": export_id,
@@ -43,4 +49,10 @@ def export_video(
         "size_bytes": destination.stat().st_size,
         "video_path": str(destination),
         "download_url": f"/media/exports/{filename}",
+        "attributions": media_attributions,
+        "music": {
+            "applied": music_applied,
+            "track": music_track,
+            "source": "user/local royalty-free library" if music_applied else None,
+        },
     }
