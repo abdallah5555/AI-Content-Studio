@@ -147,3 +147,17 @@ export async function approveJob(jobId: string): Promise<JobStatus> {
     method: 'POST',
   }));
 }
+
+export async function regenerateJobStage(jobId: string, stage: string): Promise<JobStatus> {
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}/regenerate`, {
+    method: 'POST',
+  }));
+}
+
+export async function editJobStage(jobId: string, stage: string, content: Record<string, unknown>): Promise<JobStatus> {
+  return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}/stages/${stage}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  }));
+}
