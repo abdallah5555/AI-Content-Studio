@@ -12,6 +12,7 @@ from .supabase_rest import create_signed_url, upload_file
 EXPORT_ROOT = Path("output/exports")
 EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
 EXPORT_BUCKET = "content-studio-exports"
+EXPORT_LINK_TTL = 7 * 24 * 60 * 60
 
 
 def _safe_slug(value: str) -> str:
@@ -45,7 +46,7 @@ def export_video(
     if supabase_configured():
         object_path = f"exports/{filename}"
         storage_path = upload_file(EXPORT_BUCKET, object_path, destination, content_type="video/mp4")
-        download_url = create_signed_url(EXPORT_BUCKET, object_path, expires_in=3600, download_name=filename)
+        download_url = create_signed_url(EXPORT_BUCKET, object_path, expires_in=EXPORT_LINK_TTL, download_name=filename)
         provider = "supabase-storage"
 
     media_attributions = [item for item in (script_result.get("media_attributions") or []) if isinstance(item, dict)]
