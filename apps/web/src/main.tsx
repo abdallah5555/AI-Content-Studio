@@ -5,6 +5,7 @@ import './styles.css';
 import './review.css';
 import './reference.css';
 import './output.css';
+import './history.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
