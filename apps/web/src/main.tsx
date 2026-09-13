@@ -6,6 +6,7 @@ import './review.css';
 import './reference.css';
 import './output.css';
 import './history.css';
+import './intelligence.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
