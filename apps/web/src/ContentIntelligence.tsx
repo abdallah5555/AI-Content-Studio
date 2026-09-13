@@ -63,12 +63,45 @@ const tools = [
   { id: 'comments', label: 'Comment-to-Content', hint: 'حوّل تعليقات وأسئلة الجمهور لأفكار فيديوهات.', icon: Inbox },
   { id: 'research', label: 'Research Mode', hint: 'ابحث عن مصادر وميّز بين المعلومة المؤكدة والأسئلة المفتوحة.', icon: BrainCircuit },
   { id: 'winning_patterns', label: 'Winning Patterns', hint: 'اتعلم من نتائج فيديوهاتك السابقة واقترح الاختبار التالي.', icon: ChartNoAxesCombined },
+  { id: 'trend_remix', label: 'Trend Remix', hint: 'حوّل ميكانيكية الترند لفكرة أصلية خاصة بيك من غير نسخ التنفيذ.', icon: Flame },
 ];
 
 function formatNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return String(value || 0);
+}
+
+function TrendCard({
+  trend,
+  watched,
+  onToggleWatch,
+  onRemix,
+}: {
+  trend: TrendItem;
+  watched: boolean;
+  onToggleWatch: (trend: TrendItem) => void;
+  onRemix: (trend: TrendItem) => void;
+}) {
+  return (
+    <article className="trend-card">
+      <div className="trend-card-head">
+        <span className={`trend-score score-${Math.floor(trend.score / 20)}`}>{trend.score}/100</span>
+        <button className="icon-button" onClick={() => onToggleWatch(trend)} aria-label={watched ? 'إزالة من المتابعة' : 'إضافة للمتابعة'}>
+          {watched ? <BookmarkCheck size={19} /> : <Bookmark size={19} />}
+        </button>
+      </div>
+      <h3>{trend.title}</h3>
+      <span className="trend-life">{lifecycleLabels[trend.lifecycle] || trend.lifecycle}</span>
+      <div className="trend-metrics">
+        <div><span>بحث</span><strong>{trend.traffic_label || formatNumber(trend.traffic)}</strong></div>
+        <div><span>السرعة</span><strong>{trend.velocity_score}</strong></div>
+        <div><span>التشبع</span><strong>{trend.saturation_score}</strong></div>
+        <div><span>العمر</span><strong>{trend.age_hours} س</strong></div>
+      </div>
+      <button className="intel-primary" onClick={() => onRemix(trend)}><Sparkles size={17} /> اركب التريند بفكرة أصلية</button>
+    </article>
+  );
 }
 
 function ResultViewer({ result, onUseIdea }: { result: IntelligenceResult | null; onUseIdea: (idea: string) => void }) {
@@ -111,6 +144,7 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
   const [ideas, setIdeas] = useState<IdeaInboxItem[]>([]);
   const [newIdea, setNewIdea] = useState('');
   const [brandText, setBrandText] = useState('{}');
+  const [brandDescription, setBrandDescription] = useState('');
   const [brandBusy, setBrandBusy] = useState(false);
   const [performance, setPerformance] = useState({ title: '', views: '', likes: '', comments: '', shares: '', hook: '' });
 
@@ -206,12 +240,13 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
   }
 
   async function learnBrandFromDescription() {
-    if (!toolInput.trim()) { setError('اكتب وصف أسلوبك أو أمثلة من محتواك في خانة الأدوات أولًا.'); return; }
+    if (!brandDescription.trim()) { setError('اكتب وصف أسلوبك أو أمثلة من محتواك الأول.'); return; }
     setBrandBusy(true); setError('');
     try {
-      const generated = await runIntelligenceTool('brand_dna', toolInput, { platform, audience });
+      const generated = await runIntelligenceTool('brand_dna', brandDescription.trim(), { platform, audience });
       setBrandText(JSON.stringify(generated.content, null, 2));
       setResult(generated);
+      await saveBrandProfile(generated.content);
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'تعذر استخراج Brand DNA.'); }
     finally { setBrandBusy(false); }
   }
@@ -256,10 +291,7 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
       {tab === 'radar' && (
         <section className="intel-section">
           <div className="intel-toolbar">
-            <div>
-              <span className="eyebrow">Trend Radar</span>
-              <h2>الفرص اللي بتتحرك دلوقتي</h2>
-            </div>
+            <div><span className="eyebrow">Trend Radar</span><h2>الفرص اللي بتتحرك دلوقتي</h2></div>
             <div className="intel-toolbar-actions">
               <select value={geo} onChange={(event) => setGeo(event.target.value)}>
                 <option value="EG">مصر</option><option value="SA">السعودية</option><option value="AE">الإمارات</option><option value="US">عالمي/US</option>
@@ -269,25 +301,18 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
           </div>
 
           <div className="trend-grid">
-            {trends.map((trend) => (
-              <article className="trend-card" key={trend.key}>
-                <div className="trend-card-head">
-                  <span className={`trend-score score-${Math.floor(trend.score / 20)}`}>{trend.score}/100</span>
-                  <button className="icon-button" onClick={() => void toggleWatch(trend)}>{watchedKeys.has(trend.key) ? <BookmarkCheck size={19} /> : <Bookmark size={19} />}</button>
-                </div>
-                <h3>{trend.title}</h3>
-                <span className="trend-life">{lifecycleLabels[trend.lifecycle] || trend.lifecycle}</span>
-                <div className="trend-metrics">
-                  <div><span>بحث</span><strong>{trend.traffic_label || formatNumber(trend.traffic)}</strong></div>
-                  <div><span>السرعة</span><strong>{trend.velocity_score}</strong></div>
-                  <div><span>التشبع</span><strong>{trend.saturation_score}</strong></div>
-                  <div><span>العمر</span><strong>{trend.age_hours} س</strong></div>
-                </div>
-                <button className="intel-primary" onClick={() => void remixTrend(trend)}><Sparkles size={17} /> اركب التريند بفكرة أصلية</button>
-              </article>
-            ))}
+            {trends.map((trend) => <TrendCard key={trend.key} trend={trend} watched={watchedKeys.has(trend.key)} onToggleWatch={(item) => void toggleWatch(item)} onRemix={(item) => void remixTrend(item)} />)}
           </div>
           {!trendBusy && trends.length === 0 && <div className="intel-empty">مفيش بيانات تريند متاحة من المصدر المجاني حاليًا. جرّب تحديث الصفحة بعد قليل.</div>}
+
+          <div className="watchlist-section">
+            <div className="intel-toolbar compact"><div><span className="eyebrow">Watchlist</span><h2>متابَع الآن</h2></div><span className="watch-count">{watchlist.length} تريند</span></div>
+            {watchlist.length > 0 ? (
+              <div className="trend-grid watch-grid">
+                {watchlist.map((trend) => <TrendCard key={`watch-${trend.key}`} trend={trend} watched onToggleWatch={(item) => void toggleWatch(item)} onRemix={(item) => void remixTrend(item)} />)}
+              </div>
+            ) : <div className="intel-empty">احفظ أي تريند بعلامة الـBookmark وهتلاقيه هنا حتى لو خرج من القائمة الحالية.</div>}
+          </div>
         </section>
       )}
 
@@ -329,9 +354,11 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
         <section className="intel-tools-layout brand-layout">
           <section className="intel-workbench">
             <span className="eyebrow">Brand DNA</span><h2>خلي كل فيديو له نفس شخصيتك حتى لو الموضوع مختلف.</h2>
-            <p className="intel-note">اكتب وصف أسلوبك في خانة أدوات الأفكار ثم اضغط “استخرج من الوصف”، أو عدّل الـDNA يدويًا هنا.</p>
+            <p className="intel-note">اكتب وصف أسلوبك، أمثلة Hooks بتحبها، لهجتك، نوع جمهورك، والألوان أو شكل الفيديو. الذكاء الاصطناعي يحول الوصف لـDNA محفوظ.</p>
+            <textarea className="brand-description" value={brandDescription} onChange={(event) => setBrandDescription(event.target.value)} rows={5} placeholder="مثال: بتكلم بالمصري البسيط، أحب بداية صادمة من غير مبالغة، الفيديو سريع، والألوان غامقة مع بنفسجي..." />
+            <div className="intel-actions"><button className="intel-secondary" onClick={() => void learnBrandFromDescription()} disabled={brandBusy}>{brandBusy ? <LoaderCircle className="spin" size={17} /> : <BrainCircuit size={17} />} استخرج Brand DNA من الوصف</button></div>
             <textarea className="brand-editor" value={brandText} onChange={(event) => setBrandText(event.target.value)} rows={18} spellCheck={false} />
-            <div className="intel-actions"><button className="intel-primary" onClick={() => void persistBrand()} disabled={brandBusy}>{brandBusy ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />} حفظ Brand DNA</button><button className="intel-secondary" onClick={() => void learnBrandFromDescription()}>استخرج من الوصف الحالي</button></div>
+            <div className="intel-actions"><button className="intel-primary" onClick={() => void persistBrand()} disabled={brandBusy}>{brandBusy ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />} حفظ Brand DNA</button></div>
           </section>
         </section>
       )}
