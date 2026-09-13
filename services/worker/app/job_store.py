@@ -8,9 +8,13 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from .supabase_rest import configured as supabase_configured
+from .supabase_rest import delete as supabase_delete
+from .supabase_rest import select as supabase_select
+from .supabase_rest import upsert as supabase_upsert
+
 DB_PATH = Path(os.getenv("JOB_DB_PATH", "data/ai_content_studio.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
 _LOCK = Lock()
 
 
@@ -23,6 +27,8 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_job_store() -> None:
+    if supabase_configured():
+        return
     with _LOCK, _connect() as connection:
         connection.execute(
             """
@@ -41,15 +47,35 @@ def init_job_store() -> None:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at DESC)")
 
 
+def _job_title(job: dict[str, Any]) -> str | None:
+    script_output = (job.get("outputs") or {}).get("script") or {}
+    script_content = script_output.get("content") or {}
+    return str(script_content.get("title") or "").strip() or None
+
+
 def save_job(job: dict[str, Any]) -> None:
     now = datetime.now(timezone.utc).isoformat()
     created_at = str(job.get("created_at") or now)
     job["created_at"] = created_at
     job["updated_at"] = now
+    title = _job_title(job)
 
-    script_output = (job.get("outputs") or {}).get("script") or {}
-    script_content = script_output.get("content") or {}
-    title = str(script_content.get("title") or "").strip() or None
+    if supabase_configured():
+        supabase_upsert(
+            "content_studio_jobs",
+            {
+                "id": job["id"],
+                "status": str(job.get("status") or "unknown"),
+                "stage": str(job.get("stage") or "idea"),
+                "progress": int(job.get("progress") or 0),
+                "title": title,
+                "payload": job,
+                "created_at": created_at,
+                "updated_at": now,
+            },
+            on_conflict="id",
+        )
+        return
 
     payload = json.dumps(job, ensure_ascii=False, separators=(",", ":"))
     with _LOCK, _connect() as connection:
@@ -65,24 +91,18 @@ def save_job(job: dict[str, Any]) -> None:
                 payload_json = excluded.payload_json,
                 updated_at = excluded.updated_at
             """,
-            (
-                job["id"],
-                str(job.get("status") or "unknown"),
-                str(job.get("stage") or "idea"),
-                int(job.get("progress") or 0),
-                title,
-                payload,
-                created_at,
-                now,
-            ),
+            (job["id"], str(job.get("status") or "unknown"), str(job.get("stage") or "idea"), int(job.get("progress") or 0), title, payload, created_at, now),
         )
 
 
 def load_jobs() -> dict[str, dict[str, Any]]:
+    if supabase_configured():
+        rows = supabase_select("content_studio_jobs", columns="id,payload")
+        return {str(row["id"]): row["payload"] for row in rows if isinstance(row.get("payload"), dict)}
+
     init_job_store()
     with _LOCK, _connect() as connection:
         rows = connection.execute("SELECT id, payload_json FROM jobs").fetchall()
-
     loaded: dict[str, dict[str, Any]] = {}
     for row in rows:
         try:
@@ -96,14 +116,16 @@ def load_jobs() -> dict[str, dict[str, Any]]:
 
 def list_job_summaries(limit: int = 50) -> list[dict[str, Any]]:
     safe_limit = min(max(int(limit), 1), 200)
+    if supabase_configured():
+        return supabase_select(
+            "content_studio_jobs",
+            columns="id,status,stage,progress,title,created_at,updated_at",
+            order="updated_at.desc",
+            limit=safe_limit,
+        )
     with _LOCK, _connect() as connection:
         rows = connection.execute(
-            """
-            SELECT id, status, stage, progress, title, created_at, updated_at
-            FROM jobs
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
+            "SELECT id, status, stage, progress, title, created_at, updated_at FROM jobs ORDER BY updated_at DESC LIMIT ?",
             (safe_limit,),
         ).fetchall()
     return [dict(row) for row in rows]
@@ -111,27 +133,28 @@ def list_job_summaries(limit: int = 50) -> list[dict[str, Any]]:
 
 def recent_idea_context(limit: int = 30) -> list[str]:
     safe_limit = min(max(int(limit), 1), 100)
-    with _LOCK, _connect() as connection:
-        rows = connection.execute(
-            "SELECT payload_json FROM jobs ORDER BY updated_at DESC LIMIT ?",
-            (safe_limit,),
-        ).fetchall()
+    if supabase_configured():
+        rows = supabase_select("content_studio_jobs", columns="payload", order="updated_at.desc", limit=safe_limit)
+        jobs_payload = [row.get("payload") for row in rows if isinstance(row.get("payload"), dict)]
+    else:
+        with _LOCK, _connect() as connection:
+            rows = connection.execute("SELECT payload_json FROM jobs ORDER BY updated_at DESC LIMIT ?", (safe_limit,)).fetchall()
+        jobs_payload = []
+        for row in rows:
+            try:
+                jobs_payload.append(json.loads(row["payload_json"]))
+            except (json.JSONDecodeError, TypeError):
+                continue
 
     seen: set[str] = set()
     ideas: list[str] = []
-    for row in rows:
-        try:
-            job = json.loads(row["payload_json"])
-        except (json.JSONDecodeError, TypeError):
+    for job in jobs_payload:
+        if not isinstance(job, dict):
             continue
         candidates = [str((job.get("input") or {}).get("idea_prompt") or "").strip()]
         idea_content = (((job.get("outputs") or {}).get("idea") or {}).get("content") or {})
         script_content = (((job.get("outputs") or {}).get("script") or {}).get("content") or {})
-        candidates.extend([
-            str(idea_content.get("idea_title") or "").strip(),
-            str(idea_content.get("core_idea") or "").strip(),
-            str(script_content.get("title") or "").strip(),
-        ])
+        candidates.extend([str(idea_content.get("idea_title") or "").strip(), str(idea_content.get("core_idea") or "").strip(), str(script_content.get("title") or "").strip()])
         for candidate in candidates:
             key = " ".join(candidate.lower().split())
             if len(key) < 4 or key in seen:
@@ -142,5 +165,8 @@ def recent_idea_context(limit: int = 30) -> list[str]:
 
 
 def delete_job(job_id: str) -> None:
+    if supabase_configured():
+        supabase_delete("content_studio_jobs", {"id": f"eq.{job_id}"})
+        return
     with _LOCK, _connect() as connection:
         connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
