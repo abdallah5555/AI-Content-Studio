@@ -34,6 +34,26 @@ jobs:
           sudo apt-get install -y ffmpeg
       - name: Compile worker
         run: python -m compileall -q services/worker/app
+      - name: Verify SQLite job persistence
+        env:
+          JOB_DB_PATH: /tmp/ai-content-studio-ci.db
+        run: |
+          PYTHONPATH=services/worker python - <<'PY'
+          from app.job_store import init_job_store, save_job, load_jobs, list_job_summaries
+          init_job_store()
+          job = {
+              "id": "ci-job",
+              "status": "waiting_review",
+              "stage": "script",
+              "progress": 22,
+              "input": {"idea_prompt": "test"},
+              "outputs": {"script": {"content": {"title": "CI Test"}}},
+          }
+          save_job(job)
+          restored = load_jobs()
+          assert restored["ci-job"]["outputs"]["script"]["content"]["title"] == "CI Test"
+          assert list_job_summaries(1)[0]["id"] == "ci-job"
+          PY
       - name: Verify FFmpeg
         run: |
           ffmpeg -version | head -n 1
