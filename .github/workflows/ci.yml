@@ -21,7 +21,7 @@ jobs:
         run: npm run build
 
   worker:
-    name: Worker syntax
+    name: Worker checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,3 +30,7 @@ jobs:
           python-version: '3.12'
       - name: Compile worker
         run: python -m compileall -q services/worker/app
+      - name: Verify FFmpeg
+        run: |
+          ffmpeg -version | head -n 1
+          PYTHONPATH=services/worker python -c "from app.video_edit import ffmpeg_available; assert ffmpeg_available(), 'FFmpeg not available'"
