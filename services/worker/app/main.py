@@ -7,7 +7,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="AI Content Studio Worker", version="0.2.0")
+from .providers import router as providers_router
+
+app = FastAPI(title="AI Content Studio Worker", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,6 +18,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(providers_router)
 
 
 class Stage(str, Enum):
