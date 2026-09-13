@@ -20,7 +20,7 @@ from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
 
-app = FastAPI(title="AI Content Studio Worker", version="1.0.0")
+app = FastAPI(title="AI Content Studio Worker", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -89,6 +89,10 @@ class CreateJobRequest(BaseModel):
     music_volume: float = Field(default=0.12, ge=0.0, le=0.5)
 
 
+class ManualStageEdit(BaseModel):
+    content: dict[str, Any]
+
+
 jobs: dict[str, dict[str, Any]] = {}
 
 
@@ -114,6 +118,16 @@ def reference_summary(payload: CreateJobRequest) -> str | None:
 
 def stage_output_for(job: dict[str, Any], stage: Stage) -> dict[str, Any] | None:
     return job.get("outputs", {}).get(stage.value)
+
+
+def stage_index(stage: Stage) -> int:
+    return STAGES.index(stage)
+
+
+def invalidate_from(job: dict[str, Any], start_index: int) -> None:
+    outputs = job.setdefault("outputs", {})
+    for stage in STAGES[start_index:]:
+        outputs.pop(stage.value, None)
 
 
 async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
@@ -361,4 +375,78 @@ async def approve_job(job_id: str):
     job["status"] = "queued"
     job["message"] = "تمت الموافقة، جاري استكمال خط الإنتاج"
     asyncio.create_task(run_pipeline(job_id, next_stage_index))
+    return public_job(job)
+
+
+@app.post("/jobs/{job_id}/stages/{stage_name}/regenerate")
+async def regenerate_stage(job_id: str, stage_name: Stage):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] == "running":
+        raise HTTPException(status_code=409, detail="Wait for the active stage to finish before regenerating")
+
+    index = stage_index(stage_name)
+    for dependency in STAGES[:index]:
+        if not stage_output_for(job, dependency):
+            raise HTTPException(status_code=409, detail=f"Missing required previous stage: {dependency.value}")
+
+    invalidate_from(job, index)
+    job["status"] = "running"
+    job["stage"] = stage_name.value
+    job["message"] = f"جاري إعادة توليد مرحلة {stage_name.value}"
+    job["error"] = None
+    job["progress"] = round(index / len(STAGES) * 100)
+
+    try:
+        await execute_stage(job, stage_name)
+    except Exception as exc:
+        job["status"] = "failed"
+        job["error"] = str(exc)
+        job["message"] = f"فشلت إعادة توليد مرحلة {stage_name.value}"
+        return public_job(job)
+
+    job["progress"] = round((index + 1) / len(STAGES) * 100)
+    job["_next_stage_index"] = index + 1
+    if index < len(STAGES) - 1:
+        job["status"] = "waiting_review"
+        job["message"] = "تمت إعادة التوليد. راجع النتيجة قبل الاستمرار"
+    else:
+        job["status"] = "completed"
+        job["message"] = "تمت إعادة توليد بيانات SEO بنجاح"
+    return public_job(job)
+
+
+@app.patch("/jobs/{job_id}/stages/{stage_name}")
+def edit_stage_output(job_id: str, stage_name: Stage, payload: ManualStageEdit):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] == "running":
+        raise HTTPException(status_code=409, detail="Wait for the active stage to finish before editing")
+    if stage_name not in {Stage.IDEA, Stage.SCRIPT, Stage.SEO}:
+        raise HTTPException(status_code=400, detail="Manual JSON editing is supported for idea, script and SEO stages")
+
+    index = stage_index(stage_name)
+    invalidate_from(job, index + 1)
+    result = {
+        "provider": "manual",
+        "failover_log": [],
+        "content": payload.content,
+    }
+    job["outputs"][stage_name.value] = result
+    job["stage_output"] = result
+    job["active_provider"] = "manual"
+    job["provider_failover_log"] = []
+    job["stage"] = stage_name.value
+    job["progress"] = round((index + 1) / len(STAGES) * 100)
+    job["_next_stage_index"] = index + 1
+    job["error"] = None
+
+    if index < len(STAGES) - 1:
+        job["status"] = "waiting_review"
+        job["message"] = "تم حفظ التعديل اليدوي وإلغاء النواتج اللاحقة القديمة"
+    else:
+        job["status"] = "completed"
+        job["message"] = "تم حفظ تعديل SEO"
     return public_job(job)
