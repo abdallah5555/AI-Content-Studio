@@ -6,6 +6,7 @@ from typing import Any
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
+from .job_store import recent_idea_context
 from .providers import TEXT_PROVIDERS
 from .reference_analysis import REFERENCE_FILES
 
@@ -39,12 +40,10 @@ def _gemini_generate(prompt: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not configured")
-
     try:
         from google import genai
     except ImportError as exc:
         raise RuntimeError("google-genai is not installed") from exc
-
     model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
     client = genai.Client(api_key=api_key)
     interaction = client.interactions.create(model=model, input=prompt)
@@ -58,7 +57,6 @@ def _groq_generate(prompt: str) -> str:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
-
     model = os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-20b")
     payload = {
         "model": model,
@@ -83,7 +81,6 @@ def _openrouter_generate(prompt: str) -> str:
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
-
     model = os.getenv("OPENROUTER_TEXT_MODEL", "openrouter/free")
     payload = {
         "model": model,
@@ -133,7 +130,6 @@ def generate_with_failover(prompt: str) -> tuple[str, str, list[str]]:
 def _reference_context(reference_ids: list[str], preferences: dict[str, bool]) -> str:
     if not reference_ids:
         return "No visual reference is attached. Build the visual concept from the user's idea."
-
     sections: list[str] = []
     for index, reference_id in enumerate(reference_ids, start=1):
         result = REFERENCE_FILES.get(reference_id)
@@ -151,7 +147,6 @@ def _reference_context(reference_ids: list[str], preferences: dict[str, bool]) -
             )
         else:
             sections.append(f"Reference {index}: uploaded but visual analysis is not ready. Use only the user's written idea.")
-
     selected = [key for key, value in preferences.items() if value]
     preserve = ", ".join(selected) if selected else "general visual spirit only"
     return (
@@ -162,6 +157,8 @@ def _reference_context(reference_ids: list[str], preferences: dict[str, bool]) -
 
 def build_idea_prompt(payload: dict[str, Any]) -> str:
     reference_context = _reference_context(payload.get("reference_ids", []), payload.get("reference_preferences", {}))
+    recent = recent_idea_context(30)
+    recent_context = json.dumps(recent, ensure_ascii=False) if recent else "[]"
     return f"""
 Create the IDEA stage for a social-media video.
 
@@ -170,6 +167,9 @@ Content type: {payload.get('content_type')}
 Platform: {payload.get('platform')}
 Aspect ratio: {payload.get('aspect_ratio')}
 Target duration: {payload.get('duration_seconds')} seconds
+
+RECENT IDEAS / TITLES ALREADY USED:
+{recent_context}
 
 REFERENCE CONTEXT:
 {reference_context}
@@ -181,10 +181,14 @@ Return JSON only with this schema:
   "hook_angle": "the strongest opening angle",
   "audience_promise": "what the viewer gets",
   "visual_direction": "how the selected reference traits should be translated to the new idea",
-  "originality_note": "how this differs from the reference instead of copying it"
+  "originality_note": "how this differs from previous ideas and any reference instead of copying it"
 }}
 
-Keep the idea practical for production and appropriate for the target duration.
+Rules:
+- Compare meaning, angle, promise and hook against RECENT IDEAS, not only exact wording.
+- If the user's request overlaps an old topic, choose a meaningfully different angle, question, audience promise, structure or visual treatment.
+- Do not reject the user's requested topic merely because it appeared before; make the execution semantically distinct.
+- Keep the idea practical for production and appropriate for the target duration.
 """.strip()
 
 
@@ -242,17 +246,9 @@ def parse_generated_json(text: str) -> dict[str, Any]:
 
 def generate_idea(payload: dict[str, Any]) -> dict[str, Any]:
     text, provider, failover_log = generate_with_failover(build_idea_prompt(payload))
-    return {
-        "provider": provider,
-        "failover_log": failover_log,
-        "content": parse_generated_json(text),
-    }
+    return {"provider": provider, "failover_log": failover_log, "content": parse_generated_json(text)}
 
 
 def generate_script(payload: dict[str, Any], idea_result: dict[str, Any]) -> dict[str, Any]:
     text, provider, failover_log = generate_with_failover(build_script_prompt(payload, idea_result))
-    return {
-        "provider": provider,
-        "failover_log": failover_log,
-        "content": parse_generated_json(text),
-    }
+    return {"provider": provider, "failover_log": failover_log, "content": parse_generated_json(text)}
