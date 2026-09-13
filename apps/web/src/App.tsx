@@ -29,8 +29,10 @@ import {
 import { ContentIntelligence } from './ContentIntelligence';
 import { contentTypes, pipelineStages, platforms, type PlatformId } from './contentConfig';
 import { JobHistory } from './JobHistory';
+import { Scheduler } from './Scheduler';
+import { ServiceSettings } from './ServiceSettings';
 
-type View = 'dashboard' | 'create' | 'history' | 'intelligence';
+type View = 'dashboard' | 'create' | 'history' | 'intelligence' | 'schedule' | 'settings';
 type PreferenceKey = keyof ReferencePreferences;
 
 const defaultPreferences: ReferencePreferences = {
@@ -61,21 +63,23 @@ function prettySize(bytes?: number) {
 }
 
 function OutputView({ job }: { job: JobStatus }) {
-  const output = job.stage_output;
+  const completedExport = job.status === 'completed' ? job.outputs?.export : null;
+  const output = completedExport || job.stage_output;
   if (!output && !job.error) return null;
 
   if (job.error) return <section className="generation-output generation-output-error"><div className="generation-error">{job.error}</div></section>;
 
-  if (job.stage === 'tts' && output?.audio_url) {
+  if (!completedExport && job.stage === 'tts' && output?.audio_url) {
     return <section className="generation-output"><audio controls preload="metadata" src={resolveWorkerUrl(output.audio_url)} /></section>;
   }
 
-  if (['edit', 'effects', 'music', 'export'].includes(job.stage)) {
+  if (completedExport || ['edit', 'effects', 'music', 'export'].includes(job.stage)) {
     const path = (output?.video_url || output?.download_url) as string | undefined;
     if (path) {
       const url = resolveWorkerUrl(path);
       return (
         <section className="generation-output video-output">
+          {completedExport && <div className="generation-output-head"><span className="eyebrow">الفيديو النهائي</span><span className="provider-pill">جاهز للنشر</span></div>}
           <video controls preload="metadata" src={url} />
           <a className="download-link" href={url} download={output?.filename as string | undefined}><Download size={16} /> تنزيل MP4</a>
         </section>
@@ -101,6 +105,8 @@ export function App() {
   const [references, setReferences] = useState<UploadedReference[]>([]);
   const [preferences, setPreferences] = useState<ReferencePreferences>(defaultPreferences);
   const [ttsVoice, setTtsVoice] = useState('ar-EG-SalmaNeural');
+  const [ttsRate, setTtsRate] = useState(0);
+  const [musicVolume, setMusicVolume] = useState(12);
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -137,6 +143,8 @@ export function App() {
     setIdeaPrompt(restored.input.idea_prompt || '');
     setPreferences(restored.input.reference_preferences || defaultPreferences);
     setTtsVoice(restored.input.tts_voice || 'ar-EG-SalmaNeural');
+    setTtsRate(Number(String(restored.input.tts_rate || '0').replace(/[+%]/g, '')) || 0);
+    setMusicVolume(Math.round(Number(restored.input.music_volume ?? 0.12) * 100));
     setReferences([]);
     setView('create');
   }
@@ -168,8 +176,8 @@ export function App() {
         reference_ids: references.map((reference) => reference.id),
         reference_preferences: preferences,
         tts_voice: ttsVoice,
-        tts_rate: '+0%',
-        music_volume: 0.12,
+        tts_rate: `${ttsRate >= 0 ? '+' : ''}${ttsRate}%`,
+        music_volume: musicVolume / 100,
       }));
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'تعذر بدء المهمة.'); }
     finally { setSubmitting(false); }
@@ -208,6 +216,8 @@ export function App() {
 
   if (view === 'history') return <JobHistory onBack={() => setView('dashboard')} onOpen={openHistoricalJob} />;
   if (view === 'intelligence') return <ContentIntelligence onBack={() => setView('dashboard')} onUseIdea={useIntelligenceIdea} />;
+  if (view === 'schedule') return <Scheduler onBack={() => setView('dashboard')} />;
+  if (view === 'settings') return <ServiceSettings onBack={() => setView('dashboard')} />;
 
   if (view === 'create') {
     const editable = job && ['idea', 'script', 'seo'].includes(job.stage);
@@ -230,13 +240,20 @@ export function App() {
             </div>
 
             <div className="field-group"><div className="field-heading"><div><span className="field-index">5</span><strong>المدة</strong></div><span className="duration-value">{duration} ثانية</span></div><input className="duration-slider" type="range" min="15" max="300" step="15" value={duration} onChange={(event) => setDuration(Number(event.target.value))} /></div>
-            <div className="field-group"><div className="field-heading"><div><span className="field-index">6</span><strong>الصوت</strong></div></div><div className="voice-grid">{voiceOptions.map((voice) => <button key={voice.id} className={`voice-card ${ttsVoice === voice.id ? 'selected' : ''}`} onClick={() => setTtsVoice(voice.id)}><strong>{voice.label}</strong><span>{voice.hint}</span></button>)}</div></div>
+            <div className="field-group">
+              <div className="field-heading"><div><span className="field-index">6</span><strong>الصوت والموسيقى</strong></div></div>
+              <div className="voice-grid">{voiceOptions.map((voice) => <button key={voice.id} className={`voice-card ${ttsVoice === voice.id ? 'selected' : ''}`} onClick={() => setTtsVoice(voice.id)}><strong>{voice.label}</strong><span>{voice.hint}</span></button>)}</div>
+              <div className="field-heading control-heading"><div><strong>سرعة التعليق الصوتي</strong></div><span className="duration-value">{ttsRate >= 0 ? '+' : ''}{ttsRate}%</span></div>
+              <input className="duration-slider" type="range" min="-30" max="40" step="5" value={ttsRate} onChange={(event) => setTtsRate(Number(event.target.value))} />
+              <div className="field-heading control-heading"><div><strong>مستوى موسيقى الخلفية</strong></div><span className="duration-value">{musicVolume}%</span></div>
+              <input className="duration-slider" type="range" min="0" max="35" step="1" value={musicVolume} onChange={(event) => setMusicVolume(Number(event.target.value))} />
+            </div>
             <label className="review-toggle"><div><strong>مراجعة كل مرحلة</strong><span>موافقة، إعادة توليد، أو تعديل يدوي.</span></div><input type="checkbox" checked={reviewEachStage} onChange={(event) => setReviewEachStage(event.target.checked)} /></label>
             {error && <div className="error-box">{error}</div>}
             <button className="cta wide-cta" onClick={startJob} disabled={submitting || uploading}>{submitting ? <LoaderCircle className="spin" size={19} /> : <Film size={19} />} ابدأ صناعة الفيديو</button>
           </section>
 
-          <aside className="summary-card"><span className="eyebrow">ملخص</span><h2>{selectedPlatform.label}</h2><div className="preview-frame" data-ratio={selectedPlatform.aspectRatio}><Film size={28} /><span>{selectedPlatform.aspectRatio}</span></div><dl className="summary-list"><div><dt>الدقة</dt><dd>{selectedPlatform.resolution}</dd></div><div><dt>المدة</dt><dd>{duration} ث</dd></div><div><dt>المراجع</dt><dd>{references.length}</dd></div></dl><div className="reference-mode-card"><WandSparkles size={18} /><div><strong>Reference-to-Idea</strong><span>روح مشابهة، فكرة أصلية.</span></div></div></aside>
+          <aside className="summary-card"><span className="eyebrow">ملخص</span><h2>{selectedPlatform.label}</h2><div className="preview-frame" data-ratio={selectedPlatform.aspectRatio}><Film size={28} /><span>{selectedPlatform.aspectRatio}</span></div><dl className="summary-list"><div><dt>الدقة</dt><dd>{selectedPlatform.resolution}</dd></div><div><dt>المدة</dt><dd>{duration} ث</dd></div><div><dt>الصوت</dt><dd>{ttsRate >= 0 ? '+' : ''}{ttsRate}%</dd></div><div><dt>الموسيقى</dt><dd>{musicVolume}%</dd></div><div><dt>المراجع</dt><dd>{references.length}</dd></div></dl><div className="reference-mode-card"><WandSparkles size={18} /><div><strong>Reference-to-Idea</strong><span>روح مشابهة، فكرة أصلية.</span></div></div></aside>
         </div>
 
         {job && <section className="job-card">
@@ -254,13 +271,13 @@ export function App() {
     { title: 'فيديو جديد', subtitle: 'ابدأ من فكرة حتى التصدير', icon: Plus, action: () => setView('create'), primary: true },
     { title: 'Content Intelligence', subtitle: 'تريندات، فجوات، Hooks، تخطيط وذاكرة تعلم', icon: Radar, action: () => setView('intelligence'), primary: true },
     { title: 'مكتبة الأفكار', subtitle: 'راجع المشاريع السابقة والنواتج المحفوظة', icon: Lightbulb, action: () => setView('history') },
-    { title: 'المحتوى المجدول', subtitle: 'إدارة مواعيد النشر القادمة', icon: CalendarDays, action: () => undefined },
-    { title: 'مصادر الخدمات', subtitle: 'إدارة مزودي الذكاء الاصطناعي وواجهات API', icon: KeyRound, action: () => undefined },
+    { title: 'المحتوى المجدول', subtitle: 'إدارة مواعيد النشر القادمة', icon: CalendarDays, action: () => setView('schedule') },
+    { title: 'مصادر الخدمات', subtitle: 'حالة مزودي الذكاء الاصطناعي ومكتبة الموسيقى', icon: KeyRound, action: () => setView('settings') },
   ];
 
   return (
     <main className="page-shell">
-      <section className="hero"><div className="brand-badge"><Sparkles size={18} /> AI Content Studio</div><h1>اكتشف الفكرة، قيّمها، وبعدها حوّلها لفيديو.</h1><p>دلوقتي الاستوديو فيه Content Intelligence لاكتشاف التريندات والفرص قبل خط الإنتاج.</p><div className="review-buttons"><button className="cta" onClick={() => setView('intelligence')}><Radar size={19} /> اكتشف الفرص</button><button className="review-secondary" onClick={() => setView('create')}><Film size={19} /> إنشاء فيديو</button></div></section>
+      <section className="hero"><div className="brand-badge"><Sparkles size={18} /> AI Content Studio</div><h1>اكتشف الفكرة، قيّمها، وبعدها حوّلها لفيديو.</h1><p>الاستوديو يجمع Content Intelligence وخط إنتاج الفيديو والمكتبة والجدولة في واجهة واحدة.</p><div className="review-buttons"><button className="cta" onClick={() => setView('intelligence')}><Radar size={19} /> اكتشف الفرص</button><button className="review-secondary" onClick={() => setView('create')}><Film size={19} /> إنشاء فيديو</button></div></section>
       <section className="grid">{cards.map(({ title, subtitle, icon: Icon, action, primary }) => <button type="button" className={`card ${primary ? 'card-primary' : ''}`} key={title} onClick={action}><div className="icon-wrap"><Icon size={24} /></div><h2>{title}</h2><p>{subtitle}</p></button>)}</section>
       <section className="pipeline-card"><div><span className="eyebrow">خط الإنتاج</span><h2>٩ مراحل من الفكرة للنشر</h2></div><div className="pipeline">{pipelineStages.map((step, index) => <div className="step" key={step.key}><span>{index + 1}</span><strong>{step.label}</strong></div>)}</div></section>
     </main>
