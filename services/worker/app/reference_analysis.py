@@ -11,6 +11,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from .reference_store import load_references, save_reference
+from .supabase_rest import configured as supabase_configured
+from .supabase_rest import download_file as supabase_download_file
+from .supabase_rest import upload_file as supabase_upload_file
 
 router = APIRouter(prefix="/references", tags=["references"])
 
@@ -18,6 +21,7 @@ UPLOAD_ROOT = Path("tmp/reference_uploads")
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 MAX_REFERENCE_BYTES = 100 * 1024 * 1024
 ALLOWED_PREFIXES = ("image/", "video/")
+REFERENCE_BUCKET = "content-studio-references"
 
 
 class ReferenceUploadResult(BaseModel):
@@ -34,6 +38,31 @@ class ReferenceUploadResult(BaseModel):
 
 REFERENCE_FILES: dict[str, ReferenceUploadResult] = {}
 REFERENCE_PATHS: dict[str, Path] = {}
+REFERENCE_STORAGE_PATHS: dict[str, str] = {}
+
+
+def _split_storage_path(value: str) -> tuple[str, str] | None:
+    prefix = f"{REFERENCE_BUCKET}/"
+    if not value.startswith(prefix):
+        return None
+    return REFERENCE_BUCKET, value[len(prefix):]
+
+
+def _restore_local_path(reference_id: str, stored_path: str, name: str) -> Path:
+    storage = _split_storage_path(stored_path)
+    if not storage:
+        return Path(stored_path)
+    bucket, object_path = storage
+    suffix = Path(name).suffix[:12]
+    destination = UPLOAD_ROOT / f"{reference_id}{suffix}"
+    if not destination.exists() and supabase_configured():
+        try:
+            supabase_download_file(bucket, object_path, destination)
+        except Exception:
+            pass
+    REFERENCE_STORAGE_PATHS[reference_id] = stored_path
+    return destination
+
 
 for stored_reference in load_references():
     try:
@@ -41,13 +70,25 @@ for stored_reference in load_references():
     except Exception:
         continue
     REFERENCE_FILES[restored.id] = restored
-    REFERENCE_PATHS[restored.id] = Path(stored_reference["path"])
+    REFERENCE_PATHS[restored.id] = _restore_local_path(restored.id, str(stored_reference["path"]), restored.name)
 
 
 def _persist_reference(reference_id: str) -> None:
     result = REFERENCE_FILES[reference_id]
+    stored_path = REFERENCE_STORAGE_PATHS.get(reference_id) or str(REFERENCE_PATHS[reference_id])
+    save_reference(reference_id, stored_path, result.model_dump())
+
+
+def _ensure_reference_local(reference_id: str) -> Path:
     path = REFERENCE_PATHS[reference_id]
-    save_reference(reference_id, str(path), result.model_dump())
+    if path.exists():
+        return path
+    storage_path = REFERENCE_STORAGE_PATHS.get(reference_id)
+    storage = _split_storage_path(storage_path or "")
+    if storage and supabase_configured():
+        bucket, object_path = storage
+        return supabase_download_file(bucket, object_path, path)
+    return path
 
 
 def _clean_json_text(text: str) -> str:
@@ -104,9 +145,9 @@ def _analyze_with_gemini(reference_id: str) -> dict[str, Any]:
         raise RuntimeError("google-genai is not installed") from exc
 
     result = REFERENCE_FILES[reference_id]
-    path = REFERENCE_PATHS[reference_id]
+    path = _ensure_reference_local(reference_id)
     if not path.exists():
-        raise RuntimeError("Reference file is missing from worker storage")
+        raise RuntimeError("Reference file is missing from worker and durable storage")
 
     model = os.getenv("GEMINI_VISION_MODEL", "gemini-3.8-flash")
     client = genai.Client(api_key=api_key)
@@ -115,11 +156,7 @@ def _analyze_with_gemini(reference_id: str) -> dict[str, Any]:
         model=model,
         input=[
             {"type": "text", "text": _analysis_prompt(result.kind)},
-            {
-                "type": result.kind,
-                "uri": uploaded.uri,
-                "mime_type": result.mime_type,
-            },
+            {"type": result.kind, "uri": uploaded.uri, "mime_type": result.mime_type},
         ],
     )
 
@@ -135,12 +172,7 @@ def _analyze_with_gemini(reference_id: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    return {
-        "style_summary": raw_text.strip(),
-        "reusable_traits": [],
-        "avoid_copying": [],
-        "generation_guidance": raw_text.strip(),
-    }
+    return {"style_summary": raw_text.strip(), "reusable_traits": [], "avoid_copying": [], "generation_guidance": raw_text.strip()}
 
 
 @router.post("", response_model=ReferenceUploadResult)
@@ -169,6 +201,12 @@ async def upload_reference(file: UploadFile = File(...)):
     )
     REFERENCE_FILES[reference_id] = result
     REFERENCE_PATHS[reference_id] = destination
+
+    if supabase_configured():
+        object_path = f"references/{reference_id}{suffix}"
+        storage_path = supabase_upload_file(REFERENCE_BUCKET, object_path, destination, content_type=mime_type)
+        REFERENCE_STORAGE_PATHS[reference_id] = storage_path
+
     _persist_reference(reference_id)
     return result
 
@@ -189,10 +227,7 @@ def analyze_reference(reference_id: str):
         result.analysis_status = "failed"
         result.analysis_error = str(exc)
         _persist_reference(reference_id)
-        raise HTTPException(status_code=503, detail={
-            "message": "Reference analysis is unavailable",
-            "reason": result.analysis_error,
-        }) from exc
+        raise HTTPException(status_code=503, detail={"message": "Reference analysis is unavailable", "reason": result.analysis_error}) from exc
 
     _persist_reference(reference_id)
     return result
