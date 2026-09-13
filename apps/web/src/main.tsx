@@ -8,6 +8,7 @@ import './reference.css';
 import './output.css';
 import './history.css';
 import './intelligence.css';
+import './settings.css';
 import './runtime.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
