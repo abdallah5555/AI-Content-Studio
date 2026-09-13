@@ -38,6 +38,7 @@
 .intel-section { padding: 22px; }
 
 .intel-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
+.intel-toolbar.compact { margin: 0 0 14px; }
 .intel-toolbar h2 { margin: 4px 0 0; }
 .intel-toolbar-actions { display: flex; gap: 10px; align-items: center; }
 .intel-toolbar select,
@@ -45,6 +46,7 @@
 .intel-workbench textarea,
 .idea-capture textarea,
 .brand-editor,
+.brand-description,
 .performance-grid input {
   border: 1px solid rgba(148,163,184,.18);
   background: rgba(2,6,23,.55);
@@ -58,6 +60,7 @@
 .intel-inline-fields input:focus,
 .intel-workbench textarea:focus,
 .idea-capture textarea:focus,
+.brand-description:focus,
 .performance-grid input:focus { border-color: rgba(167,139,250,.65); }
 
 .trend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
@@ -71,6 +74,10 @@
 .trend-metrics span { color: #64748b; font-size: 12px; }
 .trend-metrics strong { font-size: 15px; }
 .icon-button { padding: 9px; }
+
+.watchlist-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid rgba(148,163,184,.12); }
+.watch-count { color: #c4b5fd; border: 1px solid rgba(167,139,250,.22); border-radius: 999px; padding: 7px 10px; font-size: 13px; }
+.watch-grid .trend-card { background: linear-gradient(180deg, rgba(124,58,237,.08), rgba(2,6,23,.42)); }
 
 .intel-primary {
   border: 0;
@@ -119,7 +126,8 @@
 .idea-actions .danger { color: #fca5a5; }
 
 .brand-layout { grid-template-columns: 1fr; }
-.brand-editor { width: 100%; min-height: 320px; box-sizing: border-box; resize: vertical; direction: ltr; text-align: left; }
+.brand-description { width: 100%; box-sizing: border-box; resize: vertical; min-height: 110px; }
+.brand-editor { width: 100%; min-height: 320px; box-sizing: border-box; resize: vertical; direction: ltr; text-align: left; margin-top: 16px; }
 .intel-note { color: #94a3b8; line-height: 1.7; }
 .performance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .intel-empty { padding: 28px; text-align: center; color: #94a3b8; }
