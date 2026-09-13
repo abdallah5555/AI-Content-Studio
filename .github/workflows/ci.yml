@@ -34,12 +34,14 @@ jobs:
           sudo apt-get install -y ffmpeg
       - name: Compile worker
         run: python -m compileall -q services/worker/app
-      - name: Verify SQLite job persistence
+      - name: Verify SQLite persistence
         env:
           JOB_DB_PATH: /tmp/ai-content-studio-ci.db
         run: |
           PYTHONPATH=services/worker python - <<'PY'
           from app.job_store import init_job_store, save_job, load_jobs, list_job_summaries
+          from app.reference_store import init_reference_store, save_reference, load_references
+
           init_job_store()
           job = {
               "id": "ci-job",
@@ -53,6 +55,22 @@ jobs:
           restored = load_jobs()
           assert restored["ci-job"]["outputs"]["script"]["content"]["title"] == "CI Test"
           assert list_job_summaries(1)[0]["id"] == "ci-job"
+
+          init_reference_store()
+          reference = {
+              "id": "ci-reference",
+              "name": "reference.png",
+              "kind": "image",
+              "mime_type": "image/png",
+              "size_bytes": 12,
+              "sha256": "abc",
+              "analysis_status": "ready",
+              "analysis": {"style_summary": "clean 3D"},
+              "analysis_error": None,
+          }
+          save_reference("ci-reference", "/tmp/reference.png", reference)
+          references = load_references()
+          assert any(item["id"] == "ci-reference" and item["payload"]["analysis"]["style_summary"] == "clean 3D" for item in references)
           PY
       - name: Verify FFmpeg
         run: |
