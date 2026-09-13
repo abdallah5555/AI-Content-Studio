@@ -1,4 +1,5 @@
 import asyncio
+import os
 from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .content_intelligence import router as intelligence_router
 from .effects import EFFECTS_ROOT, apply_effects
 from .exporter import EXPORT_ROOT, export_video
 from .generation import generate_idea, generate_script
@@ -22,11 +24,18 @@ from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
 
-app = FastAPI(title="AI Content Studio Worker", version="1.2.0")
+app = FastAPI(title="AI Content Studio Worker", version="1.3.0")
+
+_default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_env_origins = [origin.strip().rstrip("/") for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+_public_app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
+if _public_app_url:
+    _env_origins.append(_public_app_url)
+_allowed_origins = list(dict.fromkeys([*_default_origins, *_env_origins]))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,6 +44,7 @@ app.include_router(providers_router)
 app.include_router(references_router)
 app.include_router(tts_router)
 app.include_router(music_router)
+app.include_router(intelligence_router)
 app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
 app.mount("/media/renders", StaticFiles(directory=str(RENDER_ROOT)), name="render-media")
 app.mount("/media/effects", StaticFiles(directory=str(EFFECTS_ROOT)), name="effects-media")
@@ -98,9 +108,6 @@ class ManualStageEdit(BaseModel):
 init_job_store()
 jobs: dict[str, dict[str, Any]] = load_jobs()
 
-# A process restart cannot safely resume an in-flight FFmpeg/network operation.
-# Keep the job and completed outputs, but mark it interrupted so the user can
-# regenerate the interrupted stage instead of silently losing the project.
 for restored_job in jobs.values():
     if restored_job.get("status") in {"queued", "running"}:
         restored_job["status"] = "failed"
@@ -120,11 +127,9 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
 def reference_summary(payload: CreateJobRequest) -> str | None:
     if not payload.reference_ids:
         return None
-
     references = [REFERENCE_FILES[ref_id] for ref_id in payload.reference_ids if ref_id in REFERENCE_FILES]
     if not references:
         return "تم تحديد مراجع بصرية لكن ملفاتها غير متاحة حاليًا."
-
     ready_count = sum(1 for ref in references if ref.analysis_status == "ready")
     types = sorted({ref.kind for ref in references})
     return (
@@ -189,11 +194,7 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         script_result = stage_output_for(job, Stage.SCRIPT)
         if not script_result:
             raise RuntimeError("Media selection requires a completed script stage")
-        result = await asyncio.to_thread(
-            select_media_for_script,
-            script_result,
-            payload.get("aspect_ratio") or "9:16",
-        )
+        result = await asyncio.to_thread(select_media_for_script, script_result, payload.get("aspect_ratio") or "9:16")
         job["outputs"][Stage.MEDIA.value] = result
         job["stage_output"] = result
         job["active_provider"] = result.get("provider")
@@ -205,12 +206,7 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         tts_result = stage_output_for(job, Stage.TTS)
         if not media_result or not tts_result:
             raise RuntimeError("Edit stage requires completed media and TTS stages")
-        result = await asyncio.to_thread(
-            render_montage,
-            media_result,
-            tts_result,
-            payload.get("aspect_ratio") or "9:16",
-        )
+        result = await asyncio.to_thread(render_montage, media_result, tts_result, payload.get("aspect_ratio") or "9:16")
         job["outputs"][Stage.EDIT.value] = result
         job["stage_output"] = result
         job["active_provider"] = result.get("provider")
@@ -233,11 +229,7 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         effects_result = stage_output_for(job, Stage.EFFECTS)
         if not effects_result:
             raise RuntimeError("Music stage requires a completed effects stage")
-        result = await asyncio.to_thread(
-            mix_background_music,
-            effects_result,
-            float(payload.get("music_volume") or 0.12),
-        )
+        result = await asyncio.to_thread(mix_background_music, effects_result, float(payload.get("music_volume") or 0.12))
         job["outputs"][Stage.MUSIC.value] = result
         job["stage_output"] = result
         job["active_provider"] = result.get("provider")
@@ -272,7 +264,6 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
     job = jobs.get(job_id)
     if not job:
         return
-
     for index in range(start_index, len(STAGES)):
         stage = STAGES[index]
         job["status"] = "running"
@@ -282,7 +273,6 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
         job["_next_stage_index"] = index
         job["error"] = None
         checkpoint(job)
-
         try:
             await execute_stage(job, stage)
         except Exception as exc:
@@ -292,17 +282,14 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
             job["_next_stage_index"] = index
             checkpoint(job)
             return
-
         job["progress"] = round((index + 1) / len(STAGES) * 100)
         checkpoint(job)
-
         if job["input"]["review_each_stage"] and index < len(STAGES) - 1:
             job["status"] = "waiting_review"
             job["message"] = "المرحلة جاهزة للمراجعة قبل الاستمرار"
             job["_next_stage_index"] = index + 1
             checkpoint(job)
             return
-
     job["status"] = "completed"
     job["progress"] = 100
     job["stage"] = Stage.SEO.value
@@ -320,6 +307,7 @@ def health():
         "references": len(REFERENCE_FILES),
         "ffmpeg": ffmpeg_available(),
         "persistence": "sqlite",
+        "content_intelligence": True,
     }
 
 
@@ -333,22 +321,13 @@ async def create_job(payload: CreateJobRequest):
     missing_reference_ids = [ref_id for ref_id in payload.reference_ids if ref_id not in REFERENCE_FILES]
     if missing_reference_ids:
         raise HTTPException(status_code=400, detail={"missing_reference_ids": missing_reference_ids})
-
     if payload.reference_mode == "adapt_style_to_new_idea":
-        not_ready = [
-            ref_id
-            for ref_id in payload.reference_ids
-            if REFERENCE_FILES[ref_id].analysis_status != "ready"
-        ]
+        not_ready = [ref_id for ref_id in payload.reference_ids if REFERENCE_FILES[ref_id].analysis_status != "ready"]
         if not_ready:
             raise HTTPException(
                 status_code=409,
-                detail={
-                    "message": "Reference analysis must finish before generation",
-                    "not_ready_reference_ids": not_ready,
-                },
+                detail={"message": "Reference analysis must finish before generation", "not_ready_reference_ids": not_ready},
             )
-
     job_id = str(uuid4())
     job = {
         "id": job_id,
@@ -408,7 +387,6 @@ async def approve_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     if job["status"] != "waiting_review":
         raise HTTPException(status_code=409, detail="Job is not waiting for review")
-
     next_stage_index = job.get("_next_stage_index", 0)
     job["status"] = "queued"
     job["message"] = "تمت الموافقة، جاري استكمال خط الإنتاج"
@@ -424,12 +402,10 @@ async def regenerate_stage(job_id: str, stage_name: Stage):
         raise HTTPException(status_code=404, detail="Job not found")
     if job["status"] == "running":
         raise HTTPException(status_code=409, detail="Wait for the active stage to finish before regenerating")
-
     index = stage_index(stage_name)
     for dependency in STAGES[:index]:
         if not stage_output_for(job, dependency):
             raise HTTPException(status_code=409, detail=f"Missing required previous stage: {dependency.value}")
-
     invalidate_from(job, index)
     job["status"] = "running"
     job["stage"] = stage_name.value
@@ -437,7 +413,6 @@ async def regenerate_stage(job_id: str, stage_name: Stage):
     job["error"] = None
     job["progress"] = round(index / len(STAGES) * 100)
     checkpoint(job)
-
     try:
         await execute_stage(job, stage_name)
     except Exception as exc:
@@ -446,7 +421,6 @@ async def regenerate_stage(job_id: str, stage_name: Stage):
         job["message"] = f"فشلت إعادة توليد مرحلة {stage_name.value}"
         checkpoint(job)
         return public_job(job)
-
     job["progress"] = round((index + 1) / len(STAGES) * 100)
     job["_next_stage_index"] = index + 1
     if index < len(STAGES) - 1:
@@ -468,14 +442,9 @@ def edit_stage_output(job_id: str, stage_name: Stage, payload: ManualStageEdit):
         raise HTTPException(status_code=409, detail="Wait for the active stage to finish before editing")
     if stage_name not in {Stage.IDEA, Stage.SCRIPT, Stage.SEO}:
         raise HTTPException(status_code=400, detail="Manual JSON editing is supported for idea, script and SEO stages")
-
     index = stage_index(stage_name)
     invalidate_from(job, index + 1)
-    result = {
-        "provider": "manual",
-        "failover_log": [],
-        "content": payload.content,
-    }
+    result = {"provider": "manual", "failover_log": [], "content": payload.content}
     job["outputs"][stage_name.value] = result
     job["stage_output"] = result
     job["active_provider"] = "manual"
@@ -484,7 +453,6 @@ def edit_stage_output(job_id: str, stage_name: Stage, payload: ManualStageEdit):
     job["progress"] = round((index + 1) / len(STAGES) * 100)
     job["_next_stage_index"] = index + 1
     job["error"] = None
-
     if index < len(STAGES) - 1:
         job["status"] = "waiting_review"
         job["message"] = "تم حفظ التعديل اليدوي وإلغاء النواتج اللاحقة القديمة"
