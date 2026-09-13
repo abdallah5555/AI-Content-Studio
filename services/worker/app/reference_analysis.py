@@ -10,6 +10,8 @@ from uuid import uuid4
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from .reference_store import load_references, save_reference
+
 router = APIRouter(prefix="/references", tags=["references"])
 
 UPLOAD_ROOT = Path("tmp/reference_uploads")
@@ -32,6 +34,20 @@ class ReferenceUploadResult(BaseModel):
 
 REFERENCE_FILES: dict[str, ReferenceUploadResult] = {}
 REFERENCE_PATHS: dict[str, Path] = {}
+
+for stored_reference in load_references():
+    try:
+        restored = ReferenceUploadResult.model_validate(stored_reference["payload"])
+    except Exception:
+        continue
+    REFERENCE_FILES[restored.id] = restored
+    REFERENCE_PATHS[restored.id] = Path(stored_reference["path"])
+
+
+def _persist_reference(reference_id: str) -> None:
+    result = REFERENCE_FILES[reference_id]
+    path = REFERENCE_PATHS[reference_id]
+    save_reference(reference_id, str(path), result.model_dump())
 
 
 def _clean_json_text(text: str) -> str:
@@ -89,8 +105,10 @@ def _analyze_with_gemini(reference_id: str) -> dict[str, Any]:
 
     result = REFERENCE_FILES[reference_id]
     path = REFERENCE_PATHS[reference_id]
-    model = os.getenv("GEMINI_VISION_MODEL", "gemini-3.8-flash")
+    if not path.exists():
+        raise RuntimeError("Reference file is missing from worker storage")
 
+    model = os.getenv("GEMINI_VISION_MODEL", "gemini-3.8-flash")
     client = genai.Client(api_key=api_key)
     uploaded = client.files.upload(file=str(path))
     interaction = client.interactions.create(
@@ -151,6 +169,7 @@ async def upload_reference(file: UploadFile = File(...)):
     )
     REFERENCE_FILES[reference_id] = result
     REFERENCE_PATHS[reference_id] = destination
+    _persist_reference(reference_id)
     return result
 
 
@@ -162,17 +181,20 @@ def analyze_reference(reference_id: str):
 
     result.analysis_status = "analyzing"
     result.analysis_error = None
+    _persist_reference(reference_id)
     try:
         result.analysis = _analyze_with_gemini(reference_id)
         result.analysis_status = "ready"
     except Exception as exc:
         result.analysis_status = "failed"
         result.analysis_error = str(exc)
+        _persist_reference(reference_id)
         raise HTTPException(status_code=503, detail={
             "message": "Reference analysis is unavailable",
             "reason": result.analysis_error,
         }) from exc
 
+    _persist_reference(reference_id)
     return result
 
 
