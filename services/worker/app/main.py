@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 from .effects import EFFECTS_ROOT, apply_effects
 from .exporter import EXPORT_ROOT, export_video
 from .generation import generate_idea, generate_script
+from .job_store import delete_job as delete_stored_job
+from .job_store import init_job_store, list_job_summaries, load_jobs, save_job
 from .media_search import select_media_for_script
 from .music import MUSIC_OUTPUT_ROOT, mix_background_music, router as music_router
 from .providers import router as providers_router
@@ -20,7 +22,7 @@ from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
 
-app = FastAPI(title="AI Content Studio Worker", version="1.1.0")
+app = FastAPI(title="AI Content Studio Worker", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -93,7 +95,22 @@ class ManualStageEdit(BaseModel):
     content: dict[str, Any]
 
 
-jobs: dict[str, dict[str, Any]] = {}
+init_job_store()
+jobs: dict[str, dict[str, Any]] = load_jobs()
+
+# A process restart cannot safely resume an in-flight FFmpeg/network operation.
+# Keep the job and completed outputs, but mark it interrupted so the user can
+# regenerate the interrupted stage instead of silently losing the project.
+for restored_job in jobs.values():
+    if restored_job.get("status") in {"queued", "running"}:
+        restored_job["status"] = "failed"
+        restored_job["message"] = "توقفت المهمة بسبب إعادة تشغيل الـWorker. يمكنك إعادة توليد المرحلة الحالية."
+        restored_job["error"] = "Worker restarted while this job was in progress"
+        save_job(restored_job)
+
+
+def checkpoint(job: dict[str, Any]) -> None:
+    save_job(job)
 
 
 def public_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -264,6 +281,7 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
         job["message"] = STAGE_MESSAGES[stage]
         job["_next_stage_index"] = index
         job["error"] = None
+        checkpoint(job)
 
         try:
             await execute_stage(job, stage)
@@ -272,14 +290,17 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
             job["message"] = f"فشلت مرحلة {stage.value}"
             job["error"] = str(exc)
             job["_next_stage_index"] = index
+            checkpoint(job)
             return
 
         job["progress"] = round((index + 1) / len(STAGES) * 100)
+        checkpoint(job)
 
         if job["input"]["review_each_stage"] and index < len(STAGES) - 1:
             job["status"] = "waiting_review"
             job["message"] = "المرحلة جاهزة للمراجعة قبل الاستمرار"
             job["_next_stage_index"] = index + 1
+            checkpoint(job)
             return
 
     job["status"] = "completed"
@@ -287,6 +308,7 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
     job["stage"] = Stage.SEO.value
     job["message"] = "اكتمل خط الإنتاج بنجاح وأصبح ملف MP4 وبيانات النشر جاهزين"
     job["_next_stage_index"] = len(STAGES)
+    checkpoint(job)
 
 
 @app.get("/health")
@@ -297,7 +319,13 @@ def health():
         "jobs": len(jobs),
         "references": len(REFERENCE_FILES),
         "ffmpeg": ffmpeg_available(),
+        "persistence": "sqlite",
     }
+
+
+@app.get("/jobs")
+def list_jobs(limit: int = Query(default=50, ge=1, le=200)):
+    return {"jobs": list_job_summaries(limit)}
 
 
 @app.post("/jobs")
@@ -338,6 +366,7 @@ async def create_job(payload: CreateJobRequest):
         "_next_stage_index": 0,
     }
     jobs[job_id] = job
+    checkpoint(job)
     asyncio.create_task(run_pipeline(job_id))
     return public_job(job)
 
@@ -363,6 +392,15 @@ def get_job_outputs(job_id: str):
     }
 
 
+@app.delete("/jobs/{job_id}")
+def remove_job(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    jobs.pop(job_id, None)
+    delete_stored_job(job_id)
+    return {"deleted": True, "id": job_id}
+
+
 @app.post("/jobs/{job_id}/approve")
 async def approve_job(job_id: str):
     job = jobs.get(job_id)
@@ -374,6 +412,7 @@ async def approve_job(job_id: str):
     next_stage_index = job.get("_next_stage_index", 0)
     job["status"] = "queued"
     job["message"] = "تمت الموافقة، جاري استكمال خط الإنتاج"
+    checkpoint(job)
     asyncio.create_task(run_pipeline(job_id, next_stage_index))
     return public_job(job)
 
@@ -397,6 +436,7 @@ async def regenerate_stage(job_id: str, stage_name: Stage):
     job["message"] = f"جاري إعادة توليد مرحلة {stage_name.value}"
     job["error"] = None
     job["progress"] = round(index / len(STAGES) * 100)
+    checkpoint(job)
 
     try:
         await execute_stage(job, stage_name)
@@ -404,6 +444,7 @@ async def regenerate_stage(job_id: str, stage_name: Stage):
         job["status"] = "failed"
         job["error"] = str(exc)
         job["message"] = f"فشلت إعادة توليد مرحلة {stage_name.value}"
+        checkpoint(job)
         return public_job(job)
 
     job["progress"] = round((index + 1) / len(STAGES) * 100)
@@ -414,6 +455,7 @@ async def regenerate_stage(job_id: str, stage_name: Stage):
     else:
         job["status"] = "completed"
         job["message"] = "تمت إعادة توليد بيانات SEO بنجاح"
+    checkpoint(job)
     return public_job(job)
 
 
@@ -449,4 +491,5 @@ def edit_stage_output(job_id: str, stage_name: Stage, payload: ManualStageEdit):
     else:
         job["status"] = "completed"
         job["message"] = "تم حفظ تعديل SEO"
+    checkpoint(job)
     return public_job(job)
