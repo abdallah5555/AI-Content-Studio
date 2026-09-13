@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: ai-content-studio-worker
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./services/worker/Dockerfile
+    dockerContext: ./services/worker
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
+      - key: FFMPEG_BINARY
+        value: ffmpeg
+      - key: FFPROBE_BINARY
+        value: ffprobe
+      - key: JOB_DB_PATH
+        value: data/ai_content_studio.db
+      - key: REFERENCE_DB_PATH
+        value: data/references.db
+      - key: INTELLIGENCE_DB_PATH
+        value: data/content_intelligence.db
+      - key: SCHEDULE_DB_PATH
+        value: data/content_schedule.db
+      - key: MUSIC_LIBRARY_DIR
+        value: assets/music
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: PUBLIC_APP_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: PIXABAY_API_KEY
+        sync: false
