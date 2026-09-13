@@ -6,8 +6,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .supabase_rest import configured as supabase_configured
+from .supabase_rest import create_signed_url, upload_file
+
 EXPORT_ROOT = Path("output/exports")
 EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+EXPORT_BUCKET = "content-studio-exports"
 
 
 def _safe_slug(value: str) -> str:
@@ -35,20 +39,28 @@ def export_video(
     destination = EXPORT_ROOT / filename
     shutil.copy2(source, destination)
 
-    media_attributions = [
-        item for item in (script_result.get("media_attributions") or []) if isinstance(item, dict)
-    ]
+    storage_path = None
+    download_url = f"/media/exports/{filename}"
+    provider = "local-export"
+    if supabase_configured():
+        object_path = f"exports/{filename}"
+        storage_path = upload_file(EXPORT_BUCKET, object_path, destination, content_type="video/mp4")
+        download_url = create_signed_url(EXPORT_BUCKET, object_path, expires_in=3600, download_name=filename)
+        provider = "supabase-storage"
+
+    media_attributions = [item for item in (script_result.get("media_attributions") or []) if isinstance(item, dict)]
     music_track = str(source_result.get("track") or "").strip() or None
     music_applied = bool(source_result.get("music_applied"))
 
     return {
-        "provider": "local-export",
+        "provider": provider,
         "export_id": export_id,
         "format": "mp4",
         "filename": filename,
         "size_bytes": destination.stat().st_size,
         "video_path": str(destination),
-        "download_url": f"/media/exports/{filename}",
+        "download_url": download_url,
+        "storage_path": storage_path,
         "attributions": media_attributions,
         "music": {
             "applied": music_applied,
