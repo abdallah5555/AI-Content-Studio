@@ -9,12 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .generation import generate_idea, generate_script
+from .media_search import select_media_for_script
 from .providers import router as providers_router
 from .reference_analysis import REFERENCE_FILES, router as references_router
 from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 
-app = FastAPI(title="AI Content Studio Worker", version="0.6.0")
+app = FastAPI(title="AI Content Studio Worker", version="0.7.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,7 +47,7 @@ STAGE_MESSAGES = {
     Stage.IDEA: "جاري توليد فكرة جديدة وغير مكررة",
     Stage.SCRIPT: "جاري كتابة السكربت والخطاف",
     Stage.TTS: "جاري تحويل السكربت إلى تعليق صوتي",
-    Stage.MEDIA: "جاري اختيار المشاهد المناسبة",
+    Stage.MEDIA: "جاري البحث عن أفضل المشاهد المناسبة",
     Stage.EDIT: "جاري تركيب الفيديو والمزامنة",
     Stage.EFFECTS: "جاري إضافة الانتقالات والمؤثرات",
     Stage.MUSIC: "جاري تجهيز الموسيقى الخلفية",
@@ -142,7 +143,22 @@ async def execute_stage(job: dict[str, Any], stage: Stage) -> None:
         job["provider_failover_log"] = []
         return
 
-    # Media/edit/effects/music/export/SEO connectors are added stage-by-stage.
+    if stage == Stage.MEDIA:
+        script_result = stage_output_for(job, Stage.SCRIPT)
+        if not script_result:
+            raise RuntimeError("Media selection requires a completed script stage")
+        result = await asyncio.to_thread(
+            select_media_for_script,
+            script_result,
+            payload.get("aspect_ratio") or "9:16",
+        )
+        job["outputs"][Stage.MEDIA.value] = result
+        job["stage_output"] = result
+        job["active_provider"] = result.get("provider")
+        job["provider_failover_log"] = result.get("failover_log", [])
+        return
+
+    # Edit/effects/music/export/SEO connectors are added stage-by-stage.
     await asyncio.sleep(1.0)
     placeholder = {
         "status": "prepared",
