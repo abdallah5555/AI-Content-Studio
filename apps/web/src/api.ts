@@ -43,6 +43,8 @@ export type CreateJobPayload = {
   reference_mode: 'none' | 'adapt_style_to_new_idea';
   reference_ids: string[];
   reference_preferences: ReferencePreferences;
+  tts_voice?: string;
+  tts_rate?: string;
 };
 
 export type StageGenerationResult = {
@@ -51,6 +53,13 @@ export type StageGenerationResult = {
   content?: Record<string, unknown>;
   status?: string;
   message?: string;
+  audio_id?: string;
+  audio_url?: string;
+  voice?: string;
+  rate?: string;
+  format?: string;
+  size_bytes?: number;
+  text_length?: number;
 };
 
 export type JobStatus = {
@@ -69,6 +78,11 @@ export type JobStatus = {
 };
 
 const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+export function resolveWorkerUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${workerBaseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
+}
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
