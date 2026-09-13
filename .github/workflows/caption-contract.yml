@@ -1,0 +1,35 @@
+name: Caption Timing Contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  timing:
+    name: TTS caption timing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify word-boundary grouping
+        run: |
+          PYTHONPATH=services/worker python - <<'PY'
+          from app.effects import _timed_caption_groups
+          timings = [
+              {"text": "أول", "start": 0.10, "end": 0.35},
+              {"text": "كلمة", "start": 0.36, "end": 0.70},
+              {"text": "في", "start": 0.71, "end": 0.85},
+              {"text": "الفيديو", "start": 0.86, "end": 1.25},
+              {"text": "دلوقتي.", "start": 1.26, "end": 1.70},
+          ]
+          groups = _timed_caption_groups(timings)
+          assert len(groups) == 1, groups
+          start, end, text = groups[0]
+          assert start == 0.10
+          assert end == 1.70
+          assert text == "أول كلمة في الفيديو دلوقتي."
+          PY
