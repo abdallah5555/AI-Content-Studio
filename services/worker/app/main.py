@@ -19,7 +19,9 @@ from .media_search import select_media_for_script
 from .music import MUSIC_OUTPUT_ROOT, mix_background_music, router as music_router
 from .providers import router as providers_router
 from .reference_analysis import REFERENCE_FILES, router as references_router
+from .scheduler import router as scheduler_router
 from .seo import generate_seo
+from .supabase_rest import configured as supabase_configured
 from .tts import OUTPUT_ROOT as TTS_OUTPUT_ROOT
 from .tts import generate_tts, router as tts_router
 from .video_edit import RENDER_ROOT, ffmpeg_available, render_montage
@@ -58,7 +60,7 @@ def _attach_router(feature_router) -> None:
             existing.add(signature)
 
 
-for _feature_router in (providers_router, references_router, tts_router, music_router, intelligence_router):
+for _feature_router in (providers_router, references_router, tts_router, music_router, scheduler_router, intelligence_router):
     _attach_router(_feature_router)
 
 app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
@@ -322,7 +324,7 @@ def health():
         "jobs": len(jobs),
         "references": len(REFERENCE_FILES),
         "ffmpeg": ffmpeg_available(),
-        "persistence": "sqlite",
+        "persistence": "supabase" if supabase_configured() else "sqlite",
         "content_intelligence": True,
     }
 
