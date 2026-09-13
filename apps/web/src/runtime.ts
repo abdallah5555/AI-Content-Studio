@@ -1,5 +1,7 @@
 import { installNativeBackHandler, installNetworkListener, isNativeApp, shareVideo } from './native';
 
+type Cleanup = () => void;
+
 function ensureNetworkBanner() {
   let banner = document.getElementById('runtime-network-banner');
   if (!banner) {
@@ -13,7 +15,7 @@ function ensureNetworkBanner() {
   return banner;
 }
 
-function installShareButtons() {
+function installShareButtons(): Cleanup {
   const enhance = () => {
     document.querySelectorAll<HTMLAnchorElement>('a.download-link').forEach((link) => {
       if (link.dataset.nativeEnhanced === 'true') return;
@@ -48,9 +50,9 @@ export async function bootstrapRuntime() {
   void registerPwa();
 
   const banner = ensureNetworkBanner();
-  let removeNetwork = () => undefined;
-  let removeBack = () => undefined;
-  let removeShare = () => undefined;
+  let removeNetwork: Cleanup = () => {};
+  let removeBack: Cleanup = () => {};
+  let removeShare: Cleanup = () => {};
 
   try {
     removeNetwork = await installNetworkListener((connected) => {
