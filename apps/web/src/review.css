@@ -1,5 +1,10 @@
-.review-action {
+.review-panel {
   margin-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.review-action {
   padding: 16px 18px;
   display: flex;
   align-items: center;
@@ -10,25 +15,97 @@
   background: rgba(124, 58, 237, .08);
 }
 
-.review-action > div {
+.review-action > div:first-child {
   display: grid;
   gap: 5px;
 }
 
-.review-action span {
+.review-action span,
+.manual-editor span {
   color: #94a3b8;
   font-size: 13px;
   line-height: 1.6;
 }
 
-.review-action .cta {
+.review-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+
+.review-action .cta,
+.manual-editor .cta {
   margin-top: 0;
   white-space: nowrap;
 }
 
-@media (max-width: 620px) {
+.review-secondary {
+  border: 1px solid rgba(148, 163, 184, .16);
+  background: rgba(255, 255, 255, .035);
+  color: #dbeafe;
+  border-radius: 14px;
+  padding: 12px 15px;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, transform .2s ease;
+}
+
+.review-secondary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(167, 139, 250, .4);
+  background: rgba(124, 58, 237, .08);
+}
+
+.review-secondary:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.manual-editor {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(96, 165, 250, .2);
+  background: rgba(2, 6, 23, .42);
+  display: grid;
+  gap: 13px;
+}
+
+.manual-editor > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.manual-editor textarea {
+  width: 100%;
+  min-height: 300px;
+  resize: vertical;
+  padding: 15px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, .16);
+  background: #020617;
+  color: #dbeafe;
+  font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  direction: ltr;
+  text-align: left;
+  tab-size: 2;
+}
+
+.manual-editor textarea:focus {
+  outline: 2px solid rgba(96, 165, 250, .22);
+  border-color: rgba(96, 165, 250, .45);
+}
+
+@media (max-width: 760px) {
   .review-action {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .review-buttons {
+    width: 100%;
+  }
+
+  .review-buttons > button {
+    flex: 1 1 150px;
   }
 }
