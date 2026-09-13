@@ -85,9 +85,12 @@ def delete(table: str, filters: dict[str, str]) -> None:
     request_json("DELETE", f"/rest/v1/{table}", query=filters, prefer="return=minimal")
 
 
+def _encoded_object_path(object_path: str) -> str:
+    return "/".join(urllib_parse.quote(part, safe="") for part in object_path.split("/"))
+
+
 def _object_url(bucket: str, object_path: str) -> str:
-    encoded_path = "/".join(urllib_parse.quote(part, safe="") for part in object_path.split("/"))
-    return f"{_base_url()}/storage/v1/object/{urllib_parse.quote(bucket, safe='')}/{encoded_path}"
+    return f"{_base_url()}/storage/v1/object/{urllib_parse.quote(bucket, safe='')}/{_encoded_object_path(object_path)}"
 
 
 def upload_file(bucket: str, object_path: str, source: str | Path, *, content_type: str = "application/octet-stream") -> str:
@@ -119,3 +122,18 @@ def download_file(bucket: str, object_path: str, destination: str | Path) -> Pat
     except URLError as exc:
         raise RuntimeError(f"Supabase storage network error: {exc.reason}") from exc
     return target
+
+
+def create_signed_url(bucket: str, object_path: str, *, expires_in: int = 3600, download_name: str | None = None) -> str:
+    path = f"/storage/v1/object/sign/{urllib_parse.quote(bucket, safe='')}/{_encoded_object_path(object_path)}"
+    payload: dict[str, Any] = {"expiresIn": max(60, int(expires_in))}
+    if download_name:
+        payload["download"] = download_name
+    result = request_json("POST", path, payload=payload)
+    if not isinstance(result, dict):
+        raise RuntimeError("Supabase did not return a signed URL")
+    signed = result.get("signedURL") or result.get("signedUrl")
+    if not signed:
+        raise RuntimeError("Supabase signed URL response is missing signedURL")
+    signed_text = str(signed)
+    return signed_text if signed_text.startswith("http") else f"{_base_url()}{signed_text}"
