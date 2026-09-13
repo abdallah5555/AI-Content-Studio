@@ -1,0 +1,34 @@
+.review-action {
+  margin-top: 18px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(167, 139, 250, .24);
+  border-radius: 18px;
+  background: rgba(124, 58, 237, .08);
+}
+
+.review-action > div {
+  display: grid;
+  gap: 5px;
+}
+
+.review-action span {
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.review-action .cta {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .review-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
