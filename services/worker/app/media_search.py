@@ -169,9 +169,8 @@ def select_media_for_script(script_result: dict[str, Any], aspect_ratio: str) ->
     if not selections:
         raise RuntimeError("No usable scenes were found in the script plan")
 
-    # Persist the actual chosen-source records on the script result so later SEO
-    # can render attribution deterministically without asking an LLM to invent it.
     script_result["media_attributions"] = attributions
+    word_timings = [item for item in (script_result.get("word_timings") or []) if isinstance(item, dict)]
 
     providers_used = sorted({item["media"]["provider"] for item in selections})
     return {
@@ -182,5 +181,6 @@ def select_media_for_script(script_result: dict[str, Any], aspect_ratio: str) ->
             "selections": selections,
             "attribution_required": True,
             "attributions": attributions,
+            "word_timings": word_timings,
         },
     }
