@@ -209,13 +209,21 @@ Return JSON only with this schema:
   "script": "full spoken narration",
   "cta": "short call to action",
   "scene_plan": [
-    {{"scene": 1, "seconds": 4, "visual": "what to show", "caption": "on-screen text"}}
+    {{
+      "scene": 1,
+      "seconds": 4,
+      "visual": "what to show, written for the user",
+      "caption": "on-screen text",
+      "search_query_en": "concise English stock-video search query describing the visual subject and action"
+    }}
   ]
 }}
 
 Rules:
 - Match the requested duration closely.
 - Start with a strong hook and keep retention high.
+- Make every scene's search_query_en concrete and suitable for Pexels/Pixabay stock-video search.
+- Prefer observable subjects and actions over abstract concepts in search_query_en.
 - The script must express the NEW idea, while visual direction may reuse only the selected observable traits from the reference.
 - Do not copy distinctive text, characters, logos, story beats, or exact shots from the reference.
 """.strip()
