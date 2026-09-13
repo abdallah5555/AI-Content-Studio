@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -11,8 +10,13 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/schedule", tags=["schedule"])
+from .supabase_rest import configured as supabase_configured
+from .supabase_rest import delete as supabase_delete
+from .supabase_rest import select as supabase_select
+from .supabase_rest import update as supabase_update
+from .supabase_rest import upsert as supabase_upsert
 
+router = APIRouter(prefix="/schedule", tags=["schedule"])
 DB_PATH = Path(os.getenv("SCHEDULE_DB_PATH", "data/content_schedule.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -33,6 +37,8 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_schedule_store() -> None:
+    if supabase_configured():
+        return
     with _connect() as db:
         db.execute(
             """
@@ -62,13 +68,13 @@ def _normalize_datetime(value: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _row(row: sqlite3.Row) -> dict[str, Any]:
-    item = dict(row)
-    scheduled = datetime.fromisoformat(item["scheduled_at"])
+def _normalize_item(item: dict[str, Any]) -> dict[str, Any]:
+    result = dict(item)
+    scheduled = datetime.fromisoformat(str(result["scheduled_at"]).replace("Z", "+00:00"))
     now = datetime.now(timezone.utc)
-    if item["status"] == "planned" and scheduled <= now:
-        item["status"] = "ready"
-    return item
+    if result.get("status") == "planned" and scheduled <= now:
+        result["status"] = "ready"
+    return result
 
 
 init_schedule_store()
@@ -76,24 +82,40 @@ init_schedule_store()
 
 @router.get("")
 def list_scheduled():
+    if supabase_configured():
+        rows = supabase_select("content_studio_schedule", order="scheduled_at.asc")
+        return {"items": [_normalize_item(row) for row in rows]}
     with _connect() as db:
         rows = db.execute("SELECT * FROM scheduled_content ORDER BY scheduled_at ASC").fetchall()
-    return {"items": [_row(row) for row in rows]}
+    return {"items": [_normalize_item(dict(row)) for row in rows]}
 
 
 @router.post("")
 def create_scheduled(payload: ScheduleRequest):
-    item_id = uuid4().hex
+    item_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
     scheduled_at = _normalize_datetime(payload.scheduled_at)
+    item = {
+        "id": item_id,
+        "job_id": payload.job_id,
+        "platform": payload.platform,
+        "scheduled_at": scheduled_at,
+        "title": payload.title,
+        "notes": payload.notes,
+        "status": "planned",
+        "created_at": now,
+        "updated_at": now,
+    }
+    if supabase_configured():
+        supabase_upsert("content_studio_schedule", item, on_conflict="id")
+        return {"item": _normalize_item(item)}
     with _connect() as db:
         db.execute(
             "INSERT INTO scheduled_content (id, job_id, platform, scheduled_at, title, notes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?)",
             (item_id, payload.job_id, payload.platform, scheduled_at, payload.title, payload.notes, now, now),
         )
         db.commit()
-        row = db.execute("SELECT * FROM scheduled_content WHERE id = ?", (item_id,)).fetchone()
-    return {"item": _row(row)}
+    return {"item": _normalize_item(item)}
 
 
 @router.patch("/{item_id}/status")
@@ -102,17 +124,28 @@ def update_schedule_status(item_id: str, status: str):
     if status not in allowed:
         raise HTTPException(status_code=422, detail=f"status must be one of {sorted(allowed)}")
     now = datetime.now(timezone.utc).isoformat()
+    if supabase_configured():
+        rows = supabase_update("content_studio_schedule", {"id": f"eq.{item_id}"}, {"status": status, "updated_at": now})
+        if not rows:
+            raise HTTPException(status_code=404, detail="Scheduled item not found")
+        return {"item": _normalize_item(rows[0])}
     with _connect() as db:
         cursor = db.execute("UPDATE scheduled_content SET status = ?, updated_at = ? WHERE id = ?", (status, now, item_id))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Scheduled item not found")
         db.commit()
         row = db.execute("SELECT * FROM scheduled_content WHERE id = ?", (item_id,)).fetchone()
-    return {"item": _row(row)}
+    return {"item": _normalize_item(dict(row))}
 
 
 @router.delete("/{item_id}")
 def delete_scheduled(item_id: str):
+    if supabase_configured():
+        rows = supabase_select("content_studio_schedule", columns="id", filters={"id": f"eq.{item_id}"}, limit=1)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Scheduled item not found")
+        supabase_delete("content_studio_schedule", {"id": f"eq.{item_id}"})
+        return {"deleted": True, "id": item_id}
     with _connect() as db:
         cursor = db.execute("DELETE FROM scheduled_content WHERE id = ?", (item_id,))
         db.commit()
