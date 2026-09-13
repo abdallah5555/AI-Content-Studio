@@ -38,13 +38,7 @@ def _probe_duration(path: Path) -> float | None:
     if not shutil.which(ffprobe):
         return None
     process = subprocess.run(
-        [
-            ffprobe,
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "json",
-            str(path),
-        ],
+        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
         capture_output=True,
         text=True,
         timeout=30,
@@ -67,18 +61,13 @@ def _ass_time(seconds: float) -> str:
 
 
 def _escape_ass_text(text: str) -> str:
-    return (
-        text.replace("\\", r"\\")
-        .replace("{", r"\{")
-        .replace("}", r"\}")
-        .replace("\n", r"\N")
-    )
+    return text.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
 
 
-def _build_ass(selections: list[dict[str, Any]], destination: Path, width: int, height: int) -> int:
+def _caption_header(width: int, height: int) -> str:
     font_size = 56 if height >= 1500 else 42
     margin_v = max(60, int(height * 0.08))
-    header = f"""[Script Info]
+    return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
 PlayResY: {height}
@@ -92,10 +81,55 @@ Style: Default,DejaVu Sans,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H800000
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
-    lines = [header]
-    cursor = 0.0
+
+
+def _timed_caption_groups(word_timings: list[dict[str, Any]], words_per_caption: int = 5) -> list[tuple[float, float, str]]:
+    clean: list[dict[str, Any]] = []
+    for item in word_timings:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            start = float(item.get("start") or 0.0)
+            end = float(item.get("end") or start + 0.1)
+        except (TypeError, ValueError):
+            continue
+        clean.append({"text": text, "start": max(0.0, start), "end": max(start + 0.04, end)})
+
+    groups: list[tuple[float, float, str]] = []
+    current: list[dict[str, Any]] = []
+    punctuation = (".", "!", "?", "؟", "،", ";", ":")
+    for item in clean:
+        current.append(item)
+        ends_phrase = item["text"].endswith(punctuation)
+        if len(current) >= words_per_caption or ends_phrase:
+            groups.append((current[0]["start"], current[-1]["end"], " ".join(part["text"] for part in current)))
+            current = []
+    if current:
+        groups.append((current[0]["start"], current[-1]["end"], " ".join(part["text"] for part in current)))
+    return groups
+
+
+def _build_ass(
+    selections: list[dict[str, Any]],
+    destination: Path,
+    width: int,
+    height: int,
+    word_timings: list[dict[str, Any]] | None = None,
+) -> tuple[int, str]:
+    lines = [_caption_header(width, height)]
     count = 0
-    for index, selection in enumerate(selections, start=1):
+
+    timed_groups = _timed_caption_groups(word_timings or [])
+    if timed_groups:
+        for start, end, text in timed_groups:
+            lines.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{_escape_ass_text(text)}\n")
+            count += 1
+        destination.write_text("".join(lines), encoding="utf-8-sig")
+        return count, "word-boundary"
+
+    cursor = 0.0
+    for selection in selections:
         try:
             seconds = float(selection.get("seconds") or 4.0)
         except (TypeError, ValueError):
@@ -103,28 +137,22 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         seconds = min(max(seconds, 1.0), 30.0)
         caption = str(selection.get("caption") or "").strip()
         if caption:
-            start = cursor
-            end = cursor + seconds
             lines.append(
-                f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{_escape_ass_text(caption)}\n"
+                f"Dialogue: 0,{_ass_time(cursor)},{_ass_time(cursor + seconds)},Default,,0,0,0,,{_escape_ass_text(caption)}\n"
             )
             count += 1
         cursor += seconds
 
     destination.write_text("".join(lines), encoding="utf-8-sig")
-    return count
+    return count, "scene-timing"
 
 
 def _escape_filter_path(path: Path) -> str:
     value = str(path.resolve()).replace("\\", "/")
-    value = value.replace(":", r"\:").replace("'", r"\'")
-    return value
+    return value.replace(":", r"\:").replace("'", r"\'")
 
 
-def apply_effects(
-    edit_result: dict[str, Any],
-    media_result: dict[str, Any],
-) -> dict[str, Any]:
+def apply_effects(edit_result: dict[str, Any], media_result: dict[str, Any]) -> dict[str, Any]:
     source_raw = edit_result.get("video_path")
     if not source_raw:
         raise RuntimeError("Edit stage did not return a local video_path")
@@ -134,9 +162,13 @@ def apply_effects(
 
     width = int(edit_result.get("width") or 1080)
     height = int(edit_result.get("height") or 1920)
-    selections = (media_result.get("content") or {}).get("selections") or []
+    media_content = media_result.get("content") or {}
+    selections = media_content.get("selections") or []
     if not isinstance(selections, list):
         selections = []
+    word_timings = media_content.get("word_timings") or []
+    if not isinstance(word_timings, list):
+        word_timings = []
 
     effects_id = uuid4().hex
     work_dir = WORK_ROOT / effects_id
@@ -144,7 +176,7 @@ def apply_effects(
     output = EFFECTS_ROOT / f"{effects_id}.mp4"
     ass_file = work_dir / "captions.ass"
 
-    captions_count = _build_ass(selections, ass_file, width, height)
+    captions_count, timing_mode = _build_ass(selections, ass_file, width, height, word_timings)
     duration = _probe_duration(source)
 
     filters: list[str] = []
@@ -161,26 +193,17 @@ def apply_effects(
         args = ["-y", "-i", str(source)]
         if filters:
             args += ["-vf", ",".join(filters)]
-        args += [
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "21",
-            "-c:a", "copy",
-            "-movflags", "+faststart",
-            str(output),
-        ]
+        args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "copy", "-movflags", "+faststart", str(output)]
         _run(args)
     except Exception as exc:
         if not captions_count:
             raise
-
         captions_burned = False
         warning = f"Caption burn-in failed; video kept without captions: {str(exc)[:300]}"
         fallback_filters = [item for item in filters if not item.startswith("ass=")]
         args = ["-y", "-i", str(source)]
         if fallback_filters:
-            args += ["-vf", ",".join(fallback_filters)]
-            args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21"]
+            args += ["-vf", ",".join(fallback_filters), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21"]
         else:
             args += ["-c:v", "copy"]
         args += ["-c:a", "copy", "-movflags", "+faststart", str(output)]
@@ -195,6 +218,8 @@ def apply_effects(
         "video_url": f"/media/effects/{effects_id}.mp4",
         "captions_count": captions_count,
         "captions_burned": captions_burned,
+        "caption_timing_mode": timing_mode,
+        "word_timing_count": len(word_timings),
         "fade_applied": bool(duration and duration > 1.2),
         "warning": warning,
     }
