@@ -1,6 +1,6 @@
 import asyncio
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -8,8 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .providers import router as providers_router
+from .reference_analysis import REFERENCE_FILES, router as references_router
 
-app = FastAPI(title="AI Content Studio Worker", version="0.3.0")
+app = FastAPI(title="AI Content Studio Worker", version="0.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,6 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(providers_router)
+app.include_router(references_router)
 
 
 class Stage(str, Enum):
@@ -47,12 +49,24 @@ STAGE_MESSAGES = {
 }
 
 
+class ReferencePreferences(BaseModel):
+    preserve_style: bool = True
+    preserve_colors: bool = True
+    preserve_composition: bool = False
+    preserve_motion: bool = False
+    preserve_character_shape: bool = True
+
+
 class CreateJobRequest(BaseModel):
     platform: str
     aspect_ratio: str
     duration_seconds: int = Field(ge=15, le=300)
     content_type: str
     review_each_stage: bool = False
+    idea_prompt: str = Field(default="", max_length=4000)
+    reference_mode: Literal["none", "adapt_style_to_new_idea"] = "none"
+    reference_ids: list[str] = []
+    reference_preferences: ReferencePreferences = ReferencePreferences()
 
 
 jobs: dict[str, dict[str, Any]] = {}
@@ -60,6 +74,21 @@ jobs: dict[str, dict[str, Any]] = {}
 
 def public_job(job: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in job.items() if not key.startswith("_")}
+
+
+def reference_summary(payload: CreateJobRequest) -> str | None:
+    if not payload.reference_ids:
+        return None
+
+    references = [REFERENCE_FILES[ref_id] for ref_id in payload.reference_ids if ref_id in REFERENCE_FILES]
+    if not references:
+        return "تم تحديد مراجع بصرية لكن ملفاتها غير متاحة حاليًا."
+
+    types = sorted({ref.kind for ref in references})
+    return (
+        f"تم ربط {len(references)} مرجع بصري ({' + '.join(types)}). "
+        "سيتم استخدامه لفهم الروح البصرية والتكوين والحركة المختارة، ثم تطبيقها على الفكرة الجديدة بدون نسخ المحتوى نفسه."
+    )
 
 
 async def run_pipeline(job_id: str, start_index: int = 0) -> None:
@@ -75,11 +104,10 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
         job["message"] = STAGE_MESSAGES[stage]
         job["_next_stage_index"] = index
 
-        # Placeholder work. Provider integrations will replace this delay stage-by-stage.
+        # Placeholder processing. Real AI/video providers are connected stage-by-stage.
         await asyncio.sleep(1.2)
 
-        completed_progress = round((index + 1) / len(STAGES) * 100)
-        job["progress"] = completed_progress
+        job["progress"] = round((index + 1) / len(STAGES) * 100)
 
         if job["input"]["review_each_stage"] and index < len(STAGES) - 1:
             job["status"] = "waiting_review"
@@ -96,11 +124,15 @@ async def run_pipeline(job_id: str, start_index: int = 0) -> None:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": app.version, "jobs": len(jobs)}
+    return {"status": "ok", "version": app.version, "jobs": len(jobs), "references": len(REFERENCE_FILES)}
 
 
 @app.post("/jobs")
 async def create_job(payload: CreateJobRequest):
+    missing_reference_ids = [ref_id for ref_id in payload.reference_ids if ref_id not in REFERENCE_FILES]
+    if missing_reference_ids:
+        raise HTTPException(status_code=400, detail={"missing_reference_ids": missing_reference_ids})
+
     job_id = str(uuid4())
     job = {
         "id": job_id,
@@ -109,6 +141,7 @@ async def create_job(payload: CreateJobRequest):
         "progress": 0,
         "input": payload.model_dump(),
         "message": "تمت إضافة المهمة إلى خط الإنتاج",
+        "reference_summary": reference_summary(payload),
         "_next_stage_index": 0,
     }
     jobs[job_id] = job
