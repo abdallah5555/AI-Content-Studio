@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import math
 import re
-import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha1
-from typing import Any, Literal
+from typing import Any
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
@@ -77,6 +76,10 @@ TOOLS: dict[str, dict[str, str]] = {
     "content_gap": {
         "label": "Content Gap Finder",
         "schema": '{"gaps":[{"topic":"","why_gap":"","audience_need":"","content_angle":"","difficulty":"low|medium|high","opportunity_score":0}]}'
+    },
+    "competitor": {
+        "label": "Competitor Idea Analyzer",
+        "schema": '{"observed_patterns":[{"pattern":"","evidence":"","why_it_may_work":""}],"hook_patterns":[""],"format_patterns":[""],"content_gaps":[{"gap":"","why_opportunity":"","opportunity_score":0}],"original_ideas":[{"title":"","hook":"","angle":"","format":"","originality_note":""}],"avoid_copying":[""],"recommended_idea":""}'
     },
     "hooks": {
         "label": "Viral Hook Lab",
@@ -180,13 +183,11 @@ def _score_trend(traffic: int, age_hours: float, previous: dict[str, Any] | None
     freshness = max(0.0, 100.0 - min(age_hours, 48.0) / 48.0 * 100.0)
     volume = min(100.0, math.log10(max(traffic, 10)) / 6.0 * 100.0)
 
-    velocity = 30.0
     if previous:
         previous_traffic = max(1, int(previous.get("traffic") or 1))
         growth = (traffic - previous_traffic) / previous_traffic
         velocity = min(100.0, max(0.0, 50.0 + growth * 50.0))
     else:
-        growth = 0.0
         velocity = min(80.0, 35.0 + freshness * 0.45)
 
     saturation = min(100.0, (age_hours / 48.0) * 55.0 + (volume / 100.0) * 45.0)
@@ -314,6 +315,12 @@ def _tool_prompt(tool: str, request: IntelligenceRequest) -> str:
         special_rules = "Infer patterns only from PERFORMANCE DATA. Do not invent metrics that are not present."
     elif tool == "trend_remix":
         special_rules = "Preserve only the reusable trend mechanic or cultural context. Do not copy exact videos, text, logos, characters, or protected creative execution."
+    elif tool == "competitor":
+        special_rules = (
+            "Analyze only the competitor material supplied by the user. Extract structural patterns, gaps and opportunities. "
+            "Do not copy exact scripts, wording, characters, logos, story beats or distinctive shots. "
+            "Do not invent performance metrics the user did not provide."
+        )
 
     return f"""
 You are the Content Intelligence Engine for an Arabic-first social video studio.
@@ -333,7 +340,7 @@ Return JSON only and follow this schema exactly:
 
 Rules:
 - Be practical for social content production, not generic marketing advice.
-- Prefer original angles and avoid literal copying of reference/trend content.
+- Prefer original angles and avoid literal copying of reference/trend/competitor content.
 - Scores must be 0-100 when present.
 - Egyptian Arabic is preferred for user-facing hooks/scripts when language is ar-EG.
 """.strip()
