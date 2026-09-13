@@ -8,6 +8,7 @@ Create complete social videos from idea generation through script, voice, media 
 ## Current architecture
 - `apps/web` — React + TypeScript + Vite web app / future PWA
 - `services/worker` — FastAPI worker for AI orchestration and media processing
+- SQLite — durable job/reference metadata and project history
 - FFmpeg — video normalization, montage, captions/effects, audio mixing, MP4 output
 - AI text failover — Gemini → Groq → OpenRouter
 - Visual reference analysis — Gemini multimodal
@@ -29,8 +30,28 @@ Create complete social videos from idea generation through script, voice, media 
 ## Reference-to-Idea mode
 The creator can upload an AI-generated image or video as a visual reference and then describe a completely different idea. The system analyzes observable visual traits such as style, color palette, composition, motion and object/character design, then uses only the selected reusable traits as guidance for the new work instead of copying the original content literally.
 
+Reference metadata and completed visual analysis are persisted in SQLite so a worker restart does not erase the project's reference context. Uploaded media itself remains in runtime storage and is never committed to GitHub.
+
 ## Review mode
-When **Review each stage** is enabled, the pipeline pauses after each stage so the user can inspect the idea, script, audio, media choices and rendered video before continuing.
+When **Review each stage** is enabled, the pipeline pauses after each stage. The user can:
+- approve and continue
+- regenerate the current stage
+- manually edit JSON results for idea, script and SEO stages
+
+Changing an earlier stage invalidates later outputs automatically so downstream video assets are not silently based on stale content.
+
+## Project library and persistence
+Jobs are checkpointed to SQLite after important state changes and after each pipeline stage. The Dashboard's **Idea Library** opens a real project-history view where previous jobs can be reopened or deleted.
+
+If the worker restarts while a job is actively running, completed outputs remain stored and that job is marked as interrupted instead of disappearing. The interrupted stage can then be regenerated.
+
+Default local database path:
+- `data/ai_content_studio.db`
+
+Override it with:
+- `JOB_DB_PATH`
+
+Database/WAL files, runtime uploads and generated outputs are excluded from Git.
 
 ## Environment variables
 Copy `.env.example` and configure only the providers you want to use.
@@ -43,6 +64,7 @@ Important server-side variables:
 - `PIXABAY_API_KEY`
 - optional model overrides such as `GEMINI_TEXT_MODEL` and `GEMINI_VISION_MODEL`
 - optional `MUSIC_LIBRARY_DIR`
+- optional `JOB_DB_PATH`
 - optional `FFMPEG_BINARY` / `FFPROBE_BINARY`
 
 The web app uses:
@@ -74,10 +96,13 @@ Upload royalty-free tracks through the worker's `/music/library` endpoint or pla
 - Provider secrets stay server-side.
 - Uploaded references and generated media are stored in runtime/output folders, not GitHub.
 - Media processing happens outside the browser.
+- SQLite runtime data is excluded from Git.
 
 ## CI
 GitHub Actions verifies:
 - React/TypeScript production build
 - Python syntax
+- SQLite job persistence
+- SQLite reference metadata persistence
 - FFmpeg availability
 - FFmpeg subtitle/ASS filter availability
