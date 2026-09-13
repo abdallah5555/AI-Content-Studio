@@ -37,18 +37,19 @@
 }
 .reference-item > div { display: grid; gap: 4px; color: #e2e8f0; }
 .reference-item span { color: #94a3b8; font-size: 12px; }
-.preferences-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 13px; }
-.preference-card {
+.preferences-grid, .voice-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 13px; }
+.preference-card, .voice-card {
   text-align: right;
   border-radius: 16px;
   border: 1px solid rgba(148,163,184,.12);
   background: rgba(255,255,255,.02);
   padding: 13px;
   cursor: pointer;
+  color: #e2e8f0;
 }
-.preference-card strong, .preference-card span { display: block; }
-.preference-card span { color: #7f91a9; font-size: 12px; margin-top: 5px; line-height: 1.5; }
-.preference-card.selected { border-color: rgba(139,92,246,.55); background: rgba(124,58,237,.11); }
+.preference-card strong, .preference-card span, .voice-card strong, .voice-card span { display: block; }
+.preference-card span, .voice-card span { color: #7f91a9; font-size: 12px; margin-top: 5px; line-height: 1.5; }
+.preference-card.selected, .voice-card.selected { border-color: rgba(139,92,246,.55); background: rgba(124,58,237,.11); }
 .reference-mode-card {
   margin-top: 16px;
   padding: 14px;
@@ -115,6 +116,11 @@
   border-radius: 13px;
   background: rgba(239,68,68,.08);
 }
+.audio-result { margin-top: 16px; display: grid; gap: 12px; }
+.audio-result audio { width: 100%; }
+.audio-result > div { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 7px 12px; align-items: center; }
+.audio-result span { color: #94a3b8; font-size: 12px; }
+.audio-result strong { color: #e2e8f0; font-size: 13px; }
 .failover-details { margin-top: 14px; color: #94a3b8; }
 .failover-details summary { cursor: pointer; color: #cbd5e1; }
 .failover-details ul { margin: 10px 0 0; padding-right: 20px; line-height: 1.7; }
@@ -132,7 +138,8 @@
 .review-action > div { display: grid; gap: 5px; }
 .review-action span { color: #94a3b8; font-size: 13px; }
 @media (max-width: 620px) {
-  .preferences-grid { grid-template-columns: 1fr; }
+  .preferences-grid, .voice-grid { grid-template-columns: 1fr; }
   .review-action { align-items: stretch; flex-direction: column; }
   .generation-output-head { flex-direction: column; }
+  .audio-result > div { grid-template-columns: auto 1fr; }
 }
