@@ -6,6 +6,21 @@ export type ReferencePreferences = {
   preserve_character_shape: boolean;
 };
 
+export type ReferenceAnalysis = {
+  style_summary?: string;
+  palette?: string[];
+  composition?: string;
+  lighting?: string;
+  texture_materials?: string;
+  character_object_design?: string;
+  motion?: string;
+  editing_rhythm?: string;
+  typography?: string;
+  reusable_traits?: string[];
+  avoid_copying?: string[];
+  generation_guidance?: string;
+};
+
 export type UploadedReference = {
   id: string;
   name: string;
@@ -13,7 +28,9 @@ export type UploadedReference = {
   mime_type: string;
   size_bytes: number;
   sha256: string;
-  analysis_status: 'queued' | 'ready';
+  analysis_status: 'queued' | 'analyzing' | 'ready' | 'failed';
+  analysis?: ReferenceAnalysis | null;
+  analysis_error?: string | null;
 };
 
 export type CreateJobPayload = {
@@ -54,6 +71,12 @@ export async function uploadReference(file: File): Promise<UploadedReference> {
   return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references`, {
     method: 'POST',
     body,
+  }));
+}
+
+export async function analyzeReference(referenceId: string): Promise<UploadedReference> {
+  return parseResponse<UploadedReference>(await fetch(`${workerBaseUrl}/references/${referenceId}/analyze`, {
+    method: 'POST',
   }));
 }
 
