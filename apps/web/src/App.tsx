@@ -27,8 +27,9 @@ import {
   type UploadedReference,
 } from './api';
 import { contentTypes, pipelineStages, platforms, type PlatformId } from './contentConfig';
+import { JobHistory } from './JobHistory';
 
-type View = 'dashboard' | 'create';
+type View = 'dashboard' | 'create' | 'history';
 type PreferenceKey = keyof ReferencePreferences;
 
 type MediaSelection = {
@@ -49,7 +50,7 @@ type MediaSelection = {
 
 const cards = [
   { title: 'فيديو جديد', subtitle: 'ابدأ من فكرة حتى التصدير', icon: Plus, primary: true, action: 'create' as const },
-  { title: 'مكتبة الأفكار', subtitle: 'راجع المحتوى السابق ومنع التكرار', icon: Lightbulb },
+  { title: 'مكتبة الأفكار', subtitle: 'راجع المشاريع السابقة والنواتج المحفوظة', icon: Lightbulb, action: 'history' as const },
   { title: 'المحتوى المجدول', subtitle: 'إدارة مواعيد النشر القادمة', icon: CalendarDays },
   { title: 'مصادر الخدمات', subtitle: 'إدارة مزودي الذكاء الاصطناعي وواجهات API', icon: KeyRound },
 ];
@@ -221,6 +222,22 @@ export function App() {
     setManualEditOpen(false);
   }, [job?.stage, job?.id]);
 
+  function openHistoricalJob(restored: JobStatus) {
+    setJob(restored);
+    if (platforms.some((platform) => platform.id === restored.input.platform)) {
+      setPlatformId(restored.input.platform as PlatformId);
+    }
+    setContentType(restored.input.content_type || 'تعليمي');
+    setDuration(restored.input.duration_seconds || 60);
+    setReviewEachStage(Boolean(restored.input.review_each_stage));
+    setIdeaPrompt(restored.input.idea_prompt || '');
+    setPreferences(restored.input.reference_preferences || defaultPreferences);
+    setTtsVoice(restored.input.tts_voice || 'ar-EG-SalmaNeural');
+    setReferences([]);
+    setError('');
+    setView('create');
+  }
+
   async function handleReferenceFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
@@ -312,6 +329,10 @@ export function App() {
     } finally {
       setReviewBusy(false);
     }
+  }
+
+  if (view === 'history') {
+    return <JobHistory onBack={() => setView('dashboard')} onOpen={openHistoricalJob} />;
   }
 
   if (view === 'create') {
@@ -415,7 +436,7 @@ export function App() {
   return (
     <main className="page-shell">
       <section className="hero"><div className="brand-badge"><Sparkles size={18} /> AI Content Studio</div><h1>حوّل فكرة واحدة إلى فيديو جاهز للنشر.</h1><p>من الفكرة والسكريبت والصوت إلى المشاهد والمونتاج والتصدير وSEO، مع إمكانية الاستلهام من صورة أو فيديو مرجعي.</p><button className="cta" onClick={() => setView('create')}><Film size={19} /> إنشاء فيديو جديد</button></section>
-      <section className="grid">{cards.map(({ title, subtitle, icon: Icon, primary, action }) => <button type="button" className={`card ${primary ? 'card-primary' : ''}`} key={title} onClick={() => action === 'create' && setView('create')}><div className="icon-wrap"><Icon size={24} /></div><h2>{title}</h2><p>{subtitle}</p></button>)}</section>
+      <section className="grid">{cards.map(({ title, subtitle, icon: Icon, primary, action }) => <button type="button" className={`card ${primary ? 'card-primary' : ''}`} key={title} onClick={() => { if (action === 'create') setView('create'); if (action === 'history') setView('history'); }}><div className="icon-wrap"><Icon size={24} /></div><h2>{title}</h2><p>{subtitle}</p></button>)}</section>
       <section className="pipeline-card"><div><span className="eyebrow">خط الإنتاج</span><h2>٩ مراحل من الفكرة للنشر</h2></div><div className="pipeline">{pipelineStages.map((step, index) => <div className="step" key={step.key}><span>{index + 1}</span><strong>{step.label}</strong></div>)}</div></section>
     </main>
   );
