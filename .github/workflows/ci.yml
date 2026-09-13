@@ -20,6 +20,32 @@ jobs:
       - name: Build web app
         run: npm run build
 
+  intelligence:
+    name: Content intelligence contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimal dependencies
+        run: pip install fastapi pydantic python-multipart
+      - name: Inspect router contract
+        env:
+          INTELLIGENCE_DB_PATH: /tmp/ai-content-intelligence-fast-ci.db
+          REFERENCE_DB_PATH: /tmp/ai-content-references-fast-ci.db
+        run: |
+          PYTHONPATH=services/worker python - <<'PY'
+          from app.content_intelligence import router, _parse_google_trends
+          paths = sorted(getattr(route, "path", "") for route in router.routes)
+          print("router routes=", paths)
+          assert paths, "content intelligence router has no routes"
+          assert any(path.endswith("/trends") for path in paths), paths
+          xml = '''<?xml version="1.0" encoding="UTF-8"?><rss xmlns:ht="https://trends.google.com/trending/rss"><channel><item><title>قاع الهامور</title><ht:approx_traffic>10K+</ht:approx_traffic><pubDate>Sun, 13 Sep 2026 15:00:00 +0000</pubDate></item></channel></rss>'''
+          items = _parse_google_trends(xml, "EG")
+          assert items[0]["traffic"] == 10000
+          PY
+
   worker:
     name: Worker checks
     runs-on: ubuntu-latest
