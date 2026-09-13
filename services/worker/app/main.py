@@ -45,6 +45,16 @@ app.include_router(references_router)
 app.include_router(tts_router)
 app.include_router(music_router)
 app.include_router(intelligence_router)
+
+# FastAPI/Starlette compatibility guard: the router is fully populated before
+# this module is imported. If a runtime fails to copy those APIRoutes through
+# include_router, attach the same route objects directly so the public API does
+# not silently degrade to 404s.
+if intelligence_router.routes and not any(
+    getattr(route, "path", "") == "/intelligence/trends" for route in app.routes
+):
+    app.router.routes.extend(intelligence_router.routes)
+
 app.mount("/media/tts", StaticFiles(directory=str(TTS_OUTPUT_ROOT)), name="tts-media")
 app.mount("/media/renders", StaticFiles(directory=str(RENDER_ROOT)), name="render-media")
 app.mount("/media/effects", StaticFiles(directory=str(EFFECTS_ROOT)), name="effects-media")
