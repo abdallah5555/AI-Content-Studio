@@ -88,6 +88,18 @@ export type JobStatus = {
   active_provider?: string | null;
   provider_failover_log?: string[];
   error?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type JobSummary = {
+  id: string;
+  status: JobStatus['status'];
+  stage: string;
+  progress: number;
+  title?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -138,8 +150,19 @@ export async function createJob(payload: CreateJobPayload): Promise<JobStatus> {
   }));
 }
 
+export async function listJobs(limit = 50): Promise<JobSummary[]> {
+  const result = await parseResponse<{ jobs: JobSummary[] }>(await fetch(`${workerBaseUrl}/jobs?limit=${Math.max(1, Math.min(limit, 200))}`));
+  return result.jobs;
+}
+
 export async function getJob(jobId: string): Promise<JobStatus> {
   return parseResponse<JobStatus>(await fetch(`${workerBaseUrl}/jobs/${jobId}`));
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  await parseResponse<{ deleted: boolean }>(await fetch(`${workerBaseUrl}/jobs/${jobId}`, {
+    method: 'DELETE',
+  }));
 }
 
 export async function approveJob(jobId: string): Promise<JobStatus> {
