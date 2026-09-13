@@ -10,7 +10,7 @@ import {
   Plus,
   Sparkles,
 } from 'lucide-react';
-import { createJob, getJob, type JobStatus } from './api';
+import { approveJob, createJob, getJob, type JobStatus } from './api';
 import { contentTypes, pipelineStages, platforms, type PlatformId } from './contentConfig';
 
 type View = 'dashboard' | 'create';
@@ -31,6 +31,7 @@ export function App() {
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [approving, setApproving] = useState(false);
 
   const selectedPlatform = useMemo(
     () => platforms.find((platform) => platform.id === platformId) ?? platforms[0],
@@ -42,10 +43,9 @@ export function App() {
 
     const timer = window.setInterval(async () => {
       try {
-        const next = await getJob(job.id);
-        setJob(next);
+        setJob(await getJob(job.id));
       } catch {
-        // Keep the last known state. A temporary worker outage should not erase the job from the UI.
+        // Preserve the last known state during temporary worker/network interruptions.
       }
     }, 1200);
 
@@ -55,20 +55,31 @@ export function App() {
   async function startJob() {
     setError('');
     setSubmitting(true);
-
     try {
-      const created = await createJob({
+      setJob(await createJob({
         platform: selectedPlatform.id,
         aspect_ratio: selectedPlatform.aspectRatio,
         duration_seconds: duration,
         content_type: contentType,
         review_each_stage: reviewEachStage,
-      });
-      setJob(created);
+      }));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'تعذر بدء المهمة. تأكد أن الـ Worker يعمل.');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function continueAfterReview() {
+    if (!job) return;
+    setError('');
+    setApproving(true);
+    try {
+      setJob(await approveJob(job.id));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'تعذر استكمال المهمة.');
+    } finally {
+      setApproving(false);
     }
   }
 
@@ -94,11 +105,7 @@ export function App() {
               </div>
               <div className="platform-grid">
                 {platforms.map((platform) => (
-                  <button
-                    className={`platform-option ${platform.id === platformId ? 'selected' : ''}`}
-                    key={platform.id}
-                    onClick={() => setPlatformId(platform.id)}
-                  >
+                  <button className={`platform-option ${platform.id === platformId ? 'selected' : ''}`} key={platform.id} onClick={() => setPlatformId(platform.id)}>
                     <strong>{platform.label}</strong>
                     <span>{platform.aspectRatio} · {platform.resolution}</span>
                     <small>{platform.hint}</small>
@@ -111,9 +118,7 @@ export function App() {
               <div className="field-heading"><div><span className="field-index">2</span><strong>نوع المحتوى</strong></div></div>
               <div className="chip-row">
                 {contentTypes.map((type) => (
-                  <button className={`choice-chip ${contentType === type ? 'selected' : ''}`} key={type} onClick={() => setContentType(type)}>
-                    {type}
-                  </button>
+                  <button className={`choice-chip ${contentType === type ? 'selected' : ''}`} key={type} onClick={() => setContentType(type)}>{type}</button>
                 ))}
               </div>
             </div>
@@ -123,15 +128,7 @@ export function App() {
                 <div><span className="field-index">3</span><strong>مدة الفيديو</strong></div>
                 <span className="duration-value">{duration < 60 ? `${duration} ثانية` : `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')} دقيقة`}</span>
               </div>
-              <input
-                className="duration-slider"
-                type="range"
-                min="15"
-                max="300"
-                step="15"
-                value={duration}
-                onChange={(event) => setDuration(Number(event.target.value))}
-              />
+              <input className="duration-slider" type="range" min="15" max="300" step="15" value={duration} onChange={(event) => setDuration(Number(event.target.value))} />
               <div className="range-labels"><span>15 ثانية</span><span>5 دقائق</span></div>
             </div>
 
@@ -180,8 +177,8 @@ export function App() {
             <div className="pipeline live-pipeline">
               {pipelineStages.map((stage, index) => {
                 const currentIndex = pipelineStages.findIndex((item) => item.key === job.stage);
-                const done = index < currentIndex || job.status === 'completed';
-                const active = index === currentIndex && job.status !== 'completed';
+                const done = index < currentIndex || job.status === 'completed' || (job.status === 'waiting_review' && index === currentIndex);
+                const active = index === currentIndex && !done;
                 return (
                   <div className={`step ${done ? 'done' : ''} ${active ? 'active' : ''}`} key={stage.key}>
                     <span>{done ? <CheckCircle2 size={15} /> : index + 1}</span>
@@ -190,6 +187,18 @@ export function App() {
                 );
               })}
             </div>
+            {job.status === 'waiting_review' && (
+              <div className="review-action">
+                <div>
+                  <strong>المرحلة الحالية جاهزة للمراجعة</strong>
+                  <span>في المرحلة التالية سنعرض ناتج كل خطوة نفسه للتعديل أو إعادة التوليد.</span>
+                </div>
+                <button className="cta" onClick={continueAfterReview} disabled={approving}>
+                  {approving ? <LoaderCircle className="spin" size={18} /> : <CheckCircle2 size={18} />}
+                  موافقة والاستمرار
+                </button>
+              </div>
+            )}
           </section>
         )}
       </main>
