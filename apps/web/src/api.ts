@@ -45,6 +45,14 @@ export type CreateJobPayload = {
   reference_preferences: ReferencePreferences;
 };
 
+export type StageGenerationResult = {
+  provider?: string;
+  failover_log?: string[];
+  content?: Record<string, unknown>;
+  status?: string;
+  message?: string;
+};
+
 export type JobStatus = {
   id: string;
   status: 'queued' | 'running' | 'waiting_review' | 'completed' | 'failed';
@@ -53,6 +61,11 @@ export type JobStatus = {
   message: string;
   input: CreateJobPayload;
   reference_summary?: string | null;
+  outputs?: Record<string, StageGenerationResult>;
+  stage_output?: StageGenerationResult | null;
+  active_provider?: string | null;
+  provider_failover_log?: string[];
+  error?: string | null;
 };
 
 const workerBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
