@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "tsc --noEmit",
+    "e2e": "playwright test -c playwright.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.0.0",
+    "@playwright/test": "^1.55.0",
     "@types/react": "latest",
     "@types/react-dom": "latest"
   }
