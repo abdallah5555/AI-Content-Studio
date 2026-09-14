@@ -16,11 +16,13 @@ WORK_ROOT.mkdir(parents=True, exist_ok=True)
 
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
 
+# 720p-class production targets keep FFmpeg inside the memory/CPU envelope of
+# the low-cost Railway worker while remaining sharp for mobile social video.
 TARGETS: dict[str, tuple[int, int]] = {
-    "9:16": (1080, 1920),
-    "4:5": (1080, 1350),
-    "1:1": (1080, 1080),
-    "16:9": (1920, 1080),
+    "9:16": (720, 1280),
+    "4:5": (720, 900),
+    "1:1": (720, 720),
+    "16:9": (1280, 720),
 }
 
 
@@ -35,7 +37,7 @@ def _run_ffmpeg(args: list[str]) -> None:
         raise RuntimeError("FFmpeg is not installed or FFMPEG_BINARY is invalid")
 
     process = subprocess.run(
-        [binary, "-threads", "2", "-filter_threads", "2", *args],
+        [binary, "-filter_threads", "2", *args],
         capture_output=True,
         text=True,
         timeout=600,
@@ -92,8 +94,10 @@ def _normalize_segment(source: Path, destination: Path, seconds: float, width: i
         "-an",
         "-vf", filter_graph,
         "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
+        "-threads", "2",
+        "-x264-params", "threads=2:lookahead_threads=1",
+        "-preset", "ultrafast",
+        "-crf", "24",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(destination),
@@ -128,7 +132,7 @@ def _attach_voice(video: Path, audio: Path, output: Path) -> None:
         "-map", "1:a:0",
         "-c:v", "copy",
         "-c:a", "aac",
-        "-b:a", "192k",
+        "-b:a", "128k",
         "-shortest",
         "-movflags", "+faststart",
         str(output),
