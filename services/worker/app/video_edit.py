@@ -35,7 +35,7 @@ def _run_ffmpeg(args: list[str]) -> None:
         raise RuntimeError("FFmpeg is not installed or FFMPEG_BINARY is invalid")
 
     process = subprocess.run(
-        [binary, *args],
+        [binary, "-threads", "2", "-filter_threads", "2", *args],
         capture_output=True,
         text=True,
         timeout=600,
@@ -49,7 +49,7 @@ def _download(url: str, destination: Path) -> None:
     req = urllib_request.Request(
         url,
         headers={
-            "User-Agent": "AI-Content-Studio/0.8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
         },
         method="GET",
@@ -147,9 +147,9 @@ def render_montage(
     if not isinstance(selections, list) or not selections:
         raise RuntimeError("Media stage returned no selected scenes")
 
-    audio_path_raw = tts_result.get("audio_path")
+    audio_path_raw = tts_result.get("audio_path") or tts_result.get("file_path")
     if not audio_path_raw:
-        raise RuntimeError("TTS stage returned no local audio_path")
+        raise RuntimeError("TTS stage returned no local audio path")
     audio_path = Path(audio_path_raw)
     if not audio_path.exists():
         raise RuntimeError("TTS audio file is missing from the worker")
