@@ -244,11 +244,89 @@ def parse_generated_json(text: str) -> dict[str, Any]:
     return {"raw": text.strip()}
 
 
+def _contains_arabic(value: str) -> bool:
+    return any("\u0600" <= ch <= "\u06ff" for ch in value)
+
+
+def _local_idea(payload: dict[str, Any]) -> dict[str, Any]:
+    topic = str(payload.get("idea_prompt") or payload.get("content_type") or "موضوع مفيد").strip()
+    if _contains_arabic(topic):
+        return {
+            "idea_title": topic[:90],
+            "core_idea": f"تقديم {topic} في صورة نقطة واضحة وسريعة قابلة للتطبيق.",
+            "hook_angle": f"إيه أهم حاجة لازم تعرفها عن {topic[:70]}؟",
+            "audience_promise": "معلومة مباشرة وسهلة يمكن تطبيقها فورًا.",
+            "visual_direction": "لقطات يومية واضحة، حركة بسيطة، وكابشن كبير مناسب للفيديو العمودي.",
+            "originality_note": "نسخة احتياطية محلية تُستخدم فقط عند تعذر مزودات الذكاء الاصطناعي الخارجية.",
+        }
+    return {
+        "idea_title": topic[:90],
+        "core_idea": f"Explain {topic} as one clear, practical takeaway.",
+        "hook_angle": f"What is the one thing you should know about {topic[:70]}?",
+        "audience_promise": "A direct takeaway the viewer can use immediately.",
+        "visual_direction": "Clear everyday footage, simple motion, and bold vertical captions.",
+        "originality_note": "Local resilience fallback used only when external AI providers are unavailable.",
+    }
+
+
+def _local_script(payload: dict[str, Any], idea_result: dict[str, Any]) -> dict[str, Any]:
+    topic = str(payload.get("idea_prompt") or idea_result.get("idea_title") or "الموضوع").strip()
+    title = str(idea_result.get("idea_title") or topic or "فيديو قصير").strip()
+    core = str(idea_result.get("core_idea") or topic).strip()
+    hook = str(idea_result.get("hook_angle") or "").strip()
+    promise = str(idea_result.get("audience_promise") or "").strip()
+    duration = max(15, int(payload.get("duration_seconds") or 15))
+    first = max(3, round(duration * 0.27))
+    second = max(4, round(duration * 0.40))
+    third = max(3, duration - first - second)
+    if _contains_arabic(topic + core + hook):
+        hook = hook or f"إيه أهم حاجة لازم تعرفها عن {topic[:70]}؟"
+        narration = " ".join(part for part in [hook, core, promise, "ابدأ بخطوة صغيرة وواضحة وراقب النتيجة بنفسك."] if part)
+        return {
+            "title": title[:120],
+            "hook": hook,
+            "script": narration,
+            "cta": "جرّب الفكرة وشارك النتيجة.",
+            "scene_plan": [
+                {"scene": 1, "seconds": first, "visual": "لقطة لشخص ينتبه للمشكلة أو الفكرة", "caption": hook[:70], "search_query_en": "person thinking reacting indoors vertical video"},
+                {"scene": 2, "seconds": second, "visual": "لقطة توضيحية لخطوة عملية مرتبطة بالفكرة", "caption": core[:70], "search_query_en": "hands demonstrating simple everyday action close up vertical"},
+                {"scene": 3, "seconds": third, "visual": "لقطة ختامية إيجابية وواضحة", "caption": "جرّبها بنفسك", "search_query_en": "happy person smiling camera lifestyle vertical video"},
+            ],
+        }
+    hook = hook or f"Here is the one thing to know about {topic[:70]}."
+    narration = " ".join(part for part in [hook, core, promise, "Start with one simple step and see the result for yourself."] if part)
+    return {
+        "title": title[:120],
+        "hook": hook,
+        "script": narration,
+        "cta": "Try it and share the result.",
+        "scene_plan": [
+            {"scene": 1, "seconds": first, "visual": "A person notices the problem or idea", "caption": hook[:70], "search_query_en": "person thinking reacting indoors vertical video"},
+            {"scene": 2, "seconds": second, "visual": "A practical action demonstrating the idea", "caption": core[:70], "search_query_en": "hands demonstrating simple everyday action close up vertical"},
+            {"scene": 3, "seconds": third, "visual": "Positive closing lifestyle shot", "caption": "Try it yourself", "search_query_en": "happy person smiling camera lifestyle vertical video"},
+        ],
+    }
+
+
 def generate_idea(payload: dict[str, Any]) -> dict[str, Any]:
-    text, provider, failover_log = generate_with_failover(build_idea_prompt(payload))
-    return {"provider": provider, "failover_log": failover_log, "content": parse_generated_json(text)}
+    try:
+        text, provider, failover_log = generate_with_failover(build_idea_prompt(payload))
+        return {"provider": provider, "failover_log": failover_log, "content": parse_generated_json(text)}
+    except Exception as exc:
+        return {
+            "provider": "local-fallback",
+            "failover_log": [str(exc)[:500]],
+            "content": _local_idea(payload),
+        }
 
 
 def generate_script(payload: dict[str, Any], idea_result: dict[str, Any]) -> dict[str, Any]:
-    text, provider, failover_log = generate_with_failover(build_script_prompt(payload, idea_result))
-    return {"provider": provider, "failover_log": failover_log, "content": parse_generated_json(text)}
+    try:
+        text, provider, failover_log = generate_with_failover(build_script_prompt(payload, idea_result))
+        return {"provider": provider, "failover_log": failover_log, "content": parse_generated_json(text)}
+    except Exception as exc:
+        return {
+            "provider": "local-fallback",
+            "failover_log": [str(exc)[:500]],
+            "content": _local_script(payload, idea_result),
+        }
