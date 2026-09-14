@@ -43,6 +43,7 @@ async function mockWorker(page: Page) {
     if (path === '/intelligence/watchlist') return route.fulfill({ json: { items: [] } });
     if (path === '/intelligence/inbox') return route.fulfill({ json: { ideas: [] } });
     if (path === '/intelligence/brand') return route.fulfill({ json: { profile: {} } });
+    if (path === '/references/avatar-library') return route.fulfill({ json: { avatars: [] } });
     if (path === '/schedule') return route.fulfill({ json: { items: [] } });
     if (path === '/providers/status') {
       return route.fulfill({ json: {
@@ -68,18 +69,26 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('dashboard exposes all activated product areas', async ({ page }) => {
-  await expect(page.getByRole('heading', { name: /اكتشف الفكرة/ })).toBeVisible();
-  for (const label of ['فيديو جديد', 'Content Intelligence', 'مكتبة الأفكار', 'المحتوى المجدول', 'مصادر الخدمات']) {
+  await expect(page.getByRole('heading', { name: /اكتشف فكرة قابلة للتنفيذ/ })).toBeVisible();
+  for (const label of ['فيديو جديد', 'رادار فرص الفيديو', 'مكتبة الأفاتارات', 'مكتبة الأفكار', 'المحتوى المجدول', 'مصادر الخدمات']) {
     await expect(page.getByRole('button', { name: new RegExp(label) })).toBeVisible();
   }
 });
 
-test('content intelligence opens and returns to dashboard', async ({ page }) => {
-  await page.getByRole('button', { name: /Content Intelligence/ }).click();
-  await expect(page.getByRole('heading', { name: /اعرف تعمل إيه/ })).toBeVisible();
-  await expect(page.getByText('Trend Radar')).toBeVisible();
+test('video opportunity radar opens and returns to dashboard', async ({ page }) => {
+  await page.getByRole('button', { name: /رادار فرص الفيديو/ }).click();
+  await expect(page.getByRole('heading', { name: /مش أي تريند/ })).toBeVisible();
+  await expect(page.getByText('Video Opportunity Radar').first()).toBeVisible();
+  await expect(page.getByText('مناسب للأداة فقط')).toBeVisible();
   await page.getByRole('button', { name: /العودة للوحة التحكم/ }).click();
-  await expect(page.getByRole('heading', { name: /اكتشف الفكرة/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /اكتشف فكرة قابلة للتنفيذ/ })).toBeVisible();
+});
+
+test('avatar library opens and exposes upload flow', async ({ page }) => {
+  await page.getByRole('button', { name: /مكتبة الأفاتارات/ }).click();
+  await expect(page.getByRole('heading', { name: /اعمل شخصيتك مرة/ })).toBeVisible();
+  await expect(page.getByText('ارفع صورة واضحة').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /حفظ الأفاتار/ })).toBeVisible();
 });
 
 test('history exposes completed final video preview action', async ({ page }) => {
@@ -108,6 +117,7 @@ test('create page exposes real voice speed and music controls', async ({ page })
   await expect(page.getByRole('heading', { name: /من فكرة إلى فيديو كامل/ })).toBeVisible();
   await expect(page.getByText('سرعة التعليق الصوتي')).toBeVisible();
   await expect(page.getByText('مستوى موسيقى الخلفية')).toBeVisible();
+  await expect(page.getByRole('button', { name: /مكتبة الأفاتارات/ })).toBeVisible();
   await expect(page.locator('input[type="range"]')).toHaveCount(3);
 });
 
