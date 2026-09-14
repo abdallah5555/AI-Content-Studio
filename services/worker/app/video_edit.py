@@ -81,15 +81,26 @@ def _safe_seconds(value: Any, default: float = 4.0) -> float:
     return min(max(seconds, 1.0), 30.0)
 
 
-def _normalize_segment(source: Path, destination: Path, seconds: float, width: int, height: int) -> None:
-    filter_graph = (
-        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},setsar=1,fps=30"
-    )
+def _normalize_segment(source: Path, destination: Path, seconds: float, width: int, height: int, *, is_image: bool = False) -> None:
+    # A subtle Ken Burns zoom gives generated stills enough motion to feel like
+    # designed short-form scenes instead of a static slideshow.
+    if is_image:
+        filter_graph = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,"
+            f"zoompan=z='min(zoom+0.0008,1.08)':d=1:s={width}x{height}:fps=30"
+        )
+        input_args = ["-loop", "1", "-i", str(source)]
+    else:
+        filter_graph = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,fps=30"
+        )
+        input_args = ["-stream_loop", "-1", "-i", str(source)]
+
     _run_ffmpeg([
         "-y",
-        "-stream_loop", "-1",
-        "-i", str(source),
+        *input_args,
         "-t", f"{seconds:.3f}",
         "-an",
         "-vf", filter_graph,
@@ -173,17 +184,19 @@ def render_montage(
             if not download_url:
                 raise RuntimeError(f"Scene {index} has no downloadable media URL")
 
-            source = work_dir / f"source-{index:03d}.mp4"
+            is_image = str(media.get("media_type") or "").lower() == "image"
+            source = work_dir / f"source-{index:03d}{'.jpg' if is_image else '.mp4'}"
             segment = work_dir / f"segment-{index:03d}.mp4"
             seconds = _safe_seconds(selection.get("seconds"))
 
             _download(download_url, source)
-            _normalize_segment(source, segment, seconds, width, height)
+            _normalize_segment(source, segment, seconds, width, height, is_image=is_image)
             normalized.append(segment)
             scene_manifest.append({
                 "scene": selection.get("scene", index),
                 "seconds": seconds,
                 "provider": media.get("provider"),
+                "media_type": media.get("media_type"),
                 "media_id": media.get("id"),
                 "query": selection.get("search_query"),
             })
