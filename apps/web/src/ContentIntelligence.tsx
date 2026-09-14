@@ -6,7 +6,9 @@ import {
   BrainCircuit,
   CalendarRange,
   ChartNoAxesCombined,
+  Clapperboard,
   Flame,
+  Images,
   Inbox,
   Lightbulb,
   LoaderCircle,
@@ -15,6 +17,7 @@ import {
   Save,
   Sparkles,
   Trash2,
+  UserRound,
   WandSparkles,
 } from 'lucide-react';
 import {
@@ -42,6 +45,16 @@ type Props = {
   onUseIdea: (idea: string) => void;
 };
 
+type TrendProductionFit = {
+  video: number;
+  aiMedia: number;
+  avatar: number;
+  shortForm: number;
+  toolScore: number;
+  recommendedMode: 'ai-images' | 'avatar' | 'hybrid';
+  label: string;
+};
+
 const lifecycleLabels: Record<string, string> = {
   early: '🟢 بدري جدًا',
   rising: '🔥 صاعد بسرعة',
@@ -67,28 +80,67 @@ const tools = [
   { id: 'trend_remix', label: 'Trend Remix', hint: 'حوّل ميكانيكية الترند لفكرة أصلية خاصة بيك من غير نسخ التنفيذ.', icon: Flame },
 ];
 
+function clampScore(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function formatNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return String(value || 0);
 }
 
-function TrendCard({ trend, watched, onToggleWatch, onRemix }: { trend: TrendItem; watched: boolean; onToggleWatch: (trend: TrendItem) => void; onRemix: (trend: TrendItem) => void }) {
+function productionFit(trend: TrendItem): TrendProductionFit {
+  const text = `${trend.title} ${(trend.related_news || []).map((item) => item.title).join(' ')}`.toLowerCase();
+  const liveHeavy = /(مباراة|نتيجة|الدوري|كأس|election|score|match|live|وفاة|زلزال|حادث|طقس|weather|سعر الدولار|أسعار الذهب)/i.test(text);
+  const explainerFriendly = /(كيف|ليه|لماذا|فوائد|سبب|طريقة|نصائح|معلومة|قصة|سر|ماذا|what|why|how|tips|story|health|tech|ذكاء|تكنولوجيا)/i.test(text);
+  const personFriendly = /(تصريح|قصة|رأي|تجربة|مقارنة|نصيحة|حكاية|explainer|opinion|story|tips)/i.test(text);
+
+  const video = clampScore(48 + trend.score * 0.34 + trend.velocity_score * 0.14 + (100 - trend.saturation_score) * 0.08 - (liveHeavy ? 7 : 0));
+  const aiMedia = clampScore(60 + trend.score * 0.18 + (100 - trend.saturation_score) * 0.12 + (explainerFriendly ? 10 : 0) - (liveHeavy ? 18 : 0));
+  const avatar = clampScore(52 + trend.score * 0.16 + (personFriendly || explainerFriendly ? 18 : 4) - (liveHeavy ? 10 : 0));
+  const shortForm = clampScore(55 + trend.velocity_score * 0.22 + trend.score * 0.18 + (trend.age_hours <= 18 ? 8 : 0));
+  const toolScore = clampScore(video * 0.35 + aiMedia * 0.3 + avatar * 0.15 + shortForm * 0.2);
+
+  const recommendedMode: TrendProductionFit['recommendedMode'] = avatar >= aiMedia + 4 ? 'avatar' : aiMedia >= 72 ? 'ai-images' : 'hybrid';
+  const label = toolScore >= 82 ? 'ممتاز للأداة' : toolScore >= 70 ? 'مناسب جدًا' : toolScore >= 58 ? 'قابل للتنفيذ' : 'أولوية أقل';
+  return { video, aiMedia, avatar, shortForm, toolScore, recommendedMode, label };
+}
+
+function trendIdeaPrompt(trend: TrendItem, fit: TrendProductionFit) {
+  const mode = fit.recommendedMode === 'avatar' ? 'أفاتار ثابت كمقدم للمحتوى' : fit.recommendedMode === 'ai-images' ? 'صور ومشاهد مولدة بالذكاء الاصطناعي' : 'تنفيذ هجين يجمع AI media مع لقطات مساعدة';
+  return `حوّل تريند «${trend.title}» إلى فيديو قصير أصلي مناسب لـTikTok/Reels. التنفيذ المفضل: ${mode}. اعمل Hook قوي، زاوية مفيدة وغير منسوخة، 3 إلى 5 مشاهد قابلة للتوليد داخل AI Content Studio، وتعليق صوتي بالمصري البسيط.`;
+}
+
+function TrendCard({ trend, watched, onToggleWatch, onRemix, onCreate }: { trend: TrendItem; watched: boolean; onToggleWatch: (trend: TrendItem) => void; onRemix: (trend: TrendItem) => void; onCreate: (trend: TrendItem, fit: TrendProductionFit) => void }) {
+  const fit = productionFit(trend);
   return (
     <article className="trend-card">
       <div className="trend-card-head">
-        <span className={`trend-score score-${Math.floor(trend.score / 20)}`}>{trend.score}/100</span>
+        <div className="trend-score-stack">
+          <span className={`trend-score score-${Math.floor(trend.score / 20)}`}>تريند {trend.score}/100</span>
+          <span className={`tool-fit-badge ${fit.toolScore >= 70 ? 'good' : ''}`}>للأداة {fit.toolScore}/100</span>
+        </div>
         <button className="icon-button" onClick={() => onToggleWatch(trend)} aria-label={watched ? 'إزالة من المتابعة' : 'إضافة للمتابعة'}>{watched ? <BookmarkCheck size={19} /> : <Bookmark size={19} />}</button>
       </div>
       <h3>{trend.title}</h3>
-      <span className="trend-life">{lifecycleLabels[trend.lifecycle] || trend.lifecycle}</span>
+      <div className="trend-label-row"><span className="trend-life">{lifecycleLabels[trend.lifecycle] || trend.lifecycle}</span><span className="production-label">{fit.label}</span></div>
+      <div className="trend-production-fit">
+        <div><Clapperboard size={15} /><span>فيديو</span><strong>{fit.video}</strong></div>
+        <div><Images size={15} /><span>AI Media</span><strong>{fit.aiMedia}</strong></div>
+        <div><UserRound size={15} /><span>Avatar</span><strong>{fit.avatar}</strong></div>
+        <div><Flame size={15} /><span>Shorts</span><strong>{fit.shortForm}</strong></div>
+      </div>
       <div className="trend-metrics">
         <div><span>بحث</span><strong>{trend.traffic_label || formatNumber(trend.traffic)}</strong></div>
         <div><span>السرعة</span><strong>{trend.velocity_score}</strong></div>
         <div><span>التشبع</span><strong>{trend.saturation_score}</strong></div>
         <div><span>العمر</span><strong>{trend.age_hours} س</strong></div>
       </div>
-      <button className="intel-primary" onClick={() => onRemix(trend)}><Sparkles size={17} /> اركب التريند بفكرة أصلية</button>
+      <div className="trend-actions">
+        <button className="intel-primary" onClick={() => onCreate(trend, fit)}><Clapperboard size={17} /> ابدأ فيديو مناسب للأداة</button>
+        <button className="intel-secondary" onClick={() => onRemix(trend)}><Sparkles size={17} /> زوايا أصلية</button>
+      </div>
     </article>
   );
 }
@@ -118,6 +170,7 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
   const [trends, setTrends] = useState<TrendItem[]>([]);
   const [watchlist, setWatchlist] = useState<TrendItem[]>([]);
   const [trendBusy, setTrendBusy] = useState(false);
+  const [toolOnly, setToolOnly] = useState(true);
   const [error, setError] = useState('');
   const [selectedTool, setSelectedTool] = useState('content_gap');
   const [toolInput, setToolInput] = useState('');
@@ -134,6 +187,11 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
 
   const watchedKeys = useMemo(() => new Set(watchlist.map((item) => item.key)), [watchlist]);
   const selectedToolMeta = tools.find((tool) => tool.id === selectedTool) || tools[0];
+  const productionTrends = useMemo(() => trends
+    .map((trend) => ({ trend, fit: productionFit(trend) }))
+    .filter(({ fit }) => !toolOnly || fit.toolScore >= 58)
+    .sort((a, b) => b.fit.toolScore - a.fit.toolScore)
+    .map(({ trend }) => trend), [trends, toolOnly]);
 
   useEffect(() => { void loadRadar(); void loadInbox(); void loadBrand(); }, []);
 
@@ -155,9 +213,13 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
 
   async function remixTrend(trend: TrendItem) {
     setSelectedTool('trend_remix'); setToolInput(trend.title); setToolBusy(true); setResult(null); setError('');
-    try { setResult(await runIntelligenceTool('trend_remix', trend.title, { context: { trend }, platform, audience })); setTab('tools'); }
+    try { setResult(await runIntelligenceTool('trend_remix', trend.title, { context: { trend, production_fit: productionFit(trend), goal: 'short_form_video_for_ai_content_studio' }, platform, audience })); setTab('tools'); }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'تعذر تحليل التريند.'); }
     finally { setToolBusy(false); }
+  }
+
+  function createFromTrend(trend: TrendItem, fit: TrendProductionFit) {
+    onUseIdea(trendIdeaPrompt(trend, fit));
   }
 
   async function runTool() {
@@ -201,9 +263,9 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
   return (
     <main className="page-shell intel-page">
       <button className="back-button" onClick={onBack}><ArrowRight size={18} /> العودة للوحة التحكم</button>
-      <section className="intel-hero"><div className="brand-badge"><Radar size={18} /> Content Intelligence Suite</div><h1>اعرف تعمل إيه، إمتى، ولمين — قبل ما تبدأ الإنتاج.</h1><p>رادار تريندات مجاني + فجوات محتوى + منافسين + Hooks + سلاسل + تخطيط + ذاكرة تتعلم من نتائجك.</p></section>
+      <section className="intel-hero"><div className="brand-badge"><Radar size={18} /> Video Opportunity Radar</div><h1>مش أي تريند — إحنا بندوّر على التريند اللي نقدر نحوله لفيديو قوي جوه الأداة.</h1><p>الرادار بيرتب الفرص حسب قابلية التنفيذ كفيديو قصير، AI Media، أفاتار، وسرعة الدخول للتريند؛ والـStock بقى اختيار مساعد مش الأساس.</p></section>
       <nav className="intel-tabs">
-        <button className={tab === 'radar' ? 'active' : ''} onClick={() => setTab('radar')}><Radar size={17} /> رادار التريند</button>
+        <button className={tab === 'radar' ? 'active' : ''} onClick={() => setTab('radar')}><Radar size={17} /> رادار فرص الفيديو</button>
         <button className={tab === 'tools' ? 'active' : ''} onClick={() => setTab('tools')}><WandSparkles size={17} /> أدوات الأفكار</button>
         <button className={tab === 'inbox' ? 'active' : ''} onClick={() => setTab('inbox')}><Inbox size={17} /> Idea Inbox</button>
         <button className={tab === 'brand' ? 'active' : ''} onClick={() => setTab('brand')}><BrainCircuit size={17} /> Brand DNA</button>
@@ -212,10 +274,11 @@ export function ContentIntelligence({ onBack, onUseIdea }: Props) {
       {error && <div className="error-box intel-error">{error}</div>}
 
       {tab === 'radar' && <section className="intel-section">
-        <div className="intel-toolbar"><div><span className="eyebrow">Trend Radar</span><h2>الفرص اللي بتتحرك دلوقتي</h2></div><div className="intel-toolbar-actions"><select value={geo} onChange={(event) => setGeo(event.target.value)}><option value="EG">مصر</option><option value="SA">السعودية</option><option value="AE">الإمارات</option><option value="US">عالمي/US</option></select><button className="intel-secondary" onClick={() => void loadRadar(true)} disabled={trendBusy}>{trendBusy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />} تحديث</button></div></div>
-        <div className="trend-grid">{trends.map((trend) => <TrendCard key={trend.key} trend={trend} watched={watchedKeys.has(trend.key)} onToggleWatch={(item) => void toggleWatch(item)} onRemix={(item) => void remixTrend(item)} />)}</div>
-        {!trendBusy && trends.length === 0 && <div className="intel-empty">مفيش بيانات تريند متاحة من المصدر المجاني حاليًا. جرّب تحديث الصفحة بعد قليل.</div>}
-        <div className="watchlist-section"><div className="intel-toolbar compact"><div><span className="eyebrow">Watchlist</span><h2>متابَع الآن</h2></div><span className="watch-count">{watchlist.length} تريند</span></div>{watchlist.length > 0 ? <div className="trend-grid watch-grid">{watchlist.map((trend) => <TrendCard key={`watch-${trend.key}`} trend={trend} watched onToggleWatch={(item) => void toggleWatch(item)} onRemix={(item) => void remixTrend(item)} />)}</div> : <div className="intel-empty">احفظ أي تريند بعلامة الـBookmark وهتلاقيه هنا حتى لو خرج من القائمة الحالية.</div>}</div>
+        <div className="intel-toolbar"><div><span className="eyebrow">Video Opportunity Radar</span><h2>أفضل التريندات القابلة للتحويل لفيديو داخل AI Content Studio</h2></div><div className="intel-toolbar-actions"><label className="tool-only-toggle"><input type="checkbox" checked={toolOnly} onChange={(event) => setToolOnly(event.target.checked)} /> مناسب للأداة فقط</label><select value={geo} onChange={(event) => setGeo(event.target.value)}><option value="EG">مصر</option><option value="SA">السعودية</option><option value="AE">الإمارات</option><option value="US">عالمي/US</option></select><button className="intel-secondary" onClick={() => void loadRadar(true)} disabled={trendBusy}>{trendBusy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />} تحديث</button></div></div>
+        <div className="radar-explainer"><span><Clapperboard size={16} /> Video Fit</span><span><Images size={16} /> AI Media Fit</span><span><UserRound size={16} /> Avatar Fit</span><span><Flame size={16} /> Short-form Fit</span></div>
+        <div className="trend-grid">{productionTrends.map((trend) => <TrendCard key={trend.key} trend={trend} watched={watchedKeys.has(trend.key)} onToggleWatch={(item) => void toggleWatch(item)} onRemix={(item) => void remixTrend(item)} onCreate={createFromTrend} />)}</div>
+        {!trendBusy && productionTrends.length === 0 && <div className="intel-empty">مفيش تريند مناسب لطريقة إنتاج الأداة حاليًا. اقفل فلتر «مناسب للأداة فقط» لو عايز تشوف كل التريندات.</div>}
+        <div className="watchlist-section"><div className="intel-toolbar compact"><div><span className="eyebrow">Watchlist</span><h2>متابَع الآن</h2></div><span className="watch-count">{watchlist.length} تريند</span></div>{watchlist.length > 0 ? <div className="trend-grid watch-grid">{watchlist.map((trend) => <TrendCard key={`watch-${trend.key}`} trend={trend} watched onToggleWatch={(item) => void toggleWatch(item)} onRemix={(item) => void remixTrend(item)} onCreate={createFromTrend} />)}</div> : <div className="intel-empty">احفظ أي فرصة بعلامة الـBookmark وهتفضل هنا حتى لو خرجت من القائمة الحالية.</div>}</div>
       </section>}
 
       {tab === 'tools' && <section className="intel-tools-layout"><aside className="intel-tool-list">{tools.map(({ id, label, hint, icon: Icon }) => <button className={selectedTool === id ? 'active' : ''} key={id} onClick={() => { setSelectedTool(id); setResult(null); }}><Icon size={18} /><div><strong>{label}</strong><span>{hint}</span></div></button>)}</aside><section className="intel-workbench"><span className="eyebrow">{selectedToolMeta.label}</span><h2>{selectedToolMeta.hint}</h2><textarea value={toolInput} onChange={(event) => setToolInput(event.target.value)} rows={7} placeholder={selectedTool === 'competitor' ? 'الصق أمثلة عناوين أو Hooks أو Transcript أو وصف حساب المنافس...' : 'اكتب الفكرة، المجال، السكربت، التعليقات، أو المحتوى اللي عايز تحلله...'} /><div className="intel-inline-fields"><input value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="الجمهور: مثال شباب مصر 18–30" /><input value={platform} onChange={(event) => setPlatform(event.target.value)} placeholder="المنصة" /></div><div className="intel-actions"><button className="intel-primary" onClick={() => void runTool()} disabled={toolBusy}>{toolBusy ? <LoaderCircle className="spin" size={17} /> : <WandSparkles size={17} />} تشغيل الأداة</button>{toolInput.trim() && <button className="intel-secondary" onClick={() => onUseIdea(toolInput.trim())}>ابدأ فيديو من النص الحالي</button>}</div><ResultViewer result={result} onUseIdea={onUseIdea} /></section></section>}
