@@ -17,6 +17,13 @@ DEFAULT_HTTP_HEADERS = {
     "Accept": "application/json",
 }
 
+PEXELS_TARGETS: dict[str, tuple[int, int]] = {
+    "9:16": (1080, 1920),
+    "4:5": (1080, 1350),
+    "1:1": (1080, 1080),
+    "16:9": (1920, 1080),
+}
+
 
 def _get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> dict[str, Any]:
     request_headers = {**DEFAULT_HTTP_HEADERS, **(headers or {})}
@@ -43,12 +50,16 @@ def _best_pexels_file(video_files: list[dict[str, Any]], aspect_ratio: str) -> d
     if not video_files:
         return None
     portrait = aspect_ratio in {"9:16", "4:5"}
+    target_width, target_height = PEXELS_TARGETS.get(aspect_ratio, PEXELS_TARGETS["9:16"])
+    target_area = target_width * target_height
 
-    def score(item: dict[str, Any]) -> tuple[int, int]:
+    def score(item: dict[str, Any]) -> tuple[int, int, int]:
         width = int(item.get("width") or 0)
         height = int(item.get("height") or 0)
         orientation_match = int((height >= width) if portrait else (width >= height))
-        return orientation_match, width * height
+        render_sized = int(width <= target_width * 1.25 and height <= target_height * 1.25)
+        area_distance = -abs((width * height) - target_area)
+        return orientation_match, render_sized, area_distance
 
     candidates = [item for item in video_files if item.get("link")]
     return max(candidates, key=score) if candidates else None
