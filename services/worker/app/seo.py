@@ -24,6 +24,38 @@ def _deterministic_attribution(script_result: dict[str, Any]) -> tuple[list[dict
     return records, "\n".join(lines)
 
 
+def _contains_arabic(value: str) -> bool:
+    return any("\u0600" <= ch <= "\u06ff" for ch in value)
+
+
+def _fallback_seo(payload: dict[str, Any], script_content: dict[str, Any]) -> dict[str, Any]:
+    title = str(script_content.get("title") or payload.get("idea_prompt") or "Short video").strip()[:120]
+    script = str(script_content.get("script") or "").strip()
+    description = script[:260] if script else str(payload.get("idea_prompt") or "").strip()[:260]
+    platform = str(payload.get("platform") or "social").strip().lower()
+    content_type = str(payload.get("content_type") or "content").strip().lower()
+    if _contains_arabic(title + description):
+        hashtags = ["#محتوى", "#فيديو_قصير"]
+        if platform == "tiktok":
+            hashtags.append("#تيك_توك")
+        elif platform in {"instagram", "reels"}:
+            hashtags.append("#ريلز")
+        return {
+            "title": title,
+            "description": description,
+            "hashtags": hashtags,
+            "keywords": [content_type, platform, str(payload.get("idea_prompt") or "")[:80]],
+            "upload_notes": "تم إنشاء بيانات نشر احتياطية محليًا بسبب تعذر مزود الذكاء الاصطناعي الخارجي.",
+        }
+    return {
+        "title": title,
+        "description": description,
+        "hashtags": ["#ShortVideo", "#Content", f"#{platform.title()}"],
+        "keywords": [content_type, platform, str(payload.get("idea_prompt") or "")[:80]],
+        "upload_notes": "Local fallback metadata generated because external AI providers were unavailable.",
+    }
+
+
 def generate_seo(payload: dict[str, Any], script_result: dict[str, Any]) -> dict[str, Any]:
     script_content = script_result.get("content") or {}
     prompt = f"""
@@ -53,8 +85,14 @@ Rules:
 - Do not invent stock-media credits or source links; attribution is attached separately by the application from the exact media selected during production.
 """.strip()
 
-    text, provider, failover_log = generate_with_failover(prompt)
-    content = parse_generated_json(text)
+    try:
+        text, provider, failover_log = generate_with_failover(prompt)
+        content = parse_generated_json(text)
+    except Exception as exc:
+        provider = "local-fallback"
+        failover_log = [str(exc)[:500]]
+        content = _fallback_seo(payload, script_content)
+
     records, note = _deterministic_attribution(script_result)
     content["attributions"] = records
     content["attribution_note"] = note
