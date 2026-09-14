@@ -8,8 +8,19 @@ from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
 
+DEFAULT_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
+
+
 def _get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> dict[str, Any]:
-    req = urllib_request.Request(url, headers=headers or {}, method="GET")
+    request_headers = {**DEFAULT_HTTP_HEADERS, **(headers or {})}
+    req = urllib_request.Request(url, headers=request_headers, method="GET")
     try:
         with urllib_request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
