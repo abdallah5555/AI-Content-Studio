@@ -99,6 +99,7 @@ async def generate_tts(
         "format": "mp3",
         "size_bytes": destination.stat().st_size,
         "file_path": str(destination),
+        "audio_path": str(destination),
         "text_length": len(text),
         "word_timing_count": len(word_timings),
         "word_timings": word_timings,
