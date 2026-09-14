@@ -164,5 +164,13 @@ def create_signed_url(bucket: str, object_path: str, *, expires_in: int = 3600, 
     signed = result.get("signedURL") or result.get("signedUrl")
     if not signed:
         raise RuntimeError("Supabase signed URL response is missing signedURL")
-    signed_text = str(signed)
-    return signed_text if signed_text.startswith("http") else f"{_base_url()}{signed_text}"
+    signed_text = str(signed).strip()
+    if signed_text.startswith("http://") or signed_text.startswith("https://"):
+        return signed_text
+    # Supabase Storage may return a path relative to `/storage/v1`, e.g.
+    # `/object/sign/<bucket>/<object>?token=...`. Normalize both response forms.
+    if signed_text.startswith("/object/"):
+        signed_text = f"/storage/v1{signed_text}"
+    elif not signed_text.startswith("/"):
+        signed_text = "/" + signed_text
+    return f"{_base_url()}{signed_text}"
