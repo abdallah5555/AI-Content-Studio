@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+from pathlib import Path
 from typing import Any
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
+from uuid import uuid4
+
+from .supabase_rest import configured as supabase_configured
+from .supabase_rest import create_signed_url, upload_file
 
 
 DEFAULT_HTTP_HEADERS = {
@@ -23,6 +29,10 @@ PEXELS_TARGETS: dict[str, tuple[int, int]] = {
     "1:1": (720, 720),
     "16:9": (1280, 720),
 }
+
+AI_MEDIA_ROOT = Path("tmp/ai_media")
+AI_MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+AI_MEDIA_BUCKET = "content-studio-renders"
 
 
 def _get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> dict[str, Any]:
@@ -131,6 +141,62 @@ def search_pixabay_video(query: str, aspect_ratio: str) -> dict[str, Any]:
     raise RuntimeError(f"Pixabay results had no usable files for: {query}")
 
 
+def generate_gemini_image(prompt: str, aspect_ratio: str) -> dict[str, Any]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+    if not supabase_configured():
+        raise RuntimeError("Supabase is required to serve generated scene images")
+    try:
+        from google import genai
+    except ImportError as exc:
+        raise RuntimeError("google-genai is not installed") from exc
+
+    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
+    client = genai.Client(api_key=api_key)
+    enhanced_prompt = (
+        "Create one production-ready social-video scene image. No text, no captions, no logos, no watermark. "
+        "Keep composition clean enough for subtitles. "
+        f"Aspect ratio: {aspect_ratio}. Scene: {prompt}"
+    )
+    interaction = client.interactions.create(
+        model=model,
+        input=enhanced_prompt,
+        response_format={"type": "image", "mime_type": "image/jpeg", "aspect_ratio": aspect_ratio},
+    )
+    output_image = getattr(interaction, "output_image", None)
+    image_data = getattr(output_image, "data", None) if output_image else None
+    if not image_data:
+        raise RuntimeError("Gemini image model returned no image")
+
+    image_id = uuid4().hex
+    local_path = AI_MEDIA_ROOT / f"{image_id}.jpg"
+    local_path.write_bytes(base64.b64decode(image_data))
+    object_path = f"ai-scenes/{image_id}.jpg"
+    upload_file(AI_MEDIA_BUCKET, object_path, local_path, content_type="image/jpeg")
+    signed_url = create_signed_url(AI_MEDIA_BUCKET, object_path, expires_in=24 * 3600)
+    width, height = PEXELS_TARGETS.get(aspect_ratio, PEXELS_TARGETS["9:16"])
+    try:
+        local_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return {
+        "provider": "gemini-image",
+        "media_type": "image",
+        "id": image_id,
+        "query": prompt,
+        "preview_url": signed_url,
+        "download_url": signed_url,
+        "width": width,
+        "height": height,
+        "duration": None,
+        "page_url": None,
+        "creator": "AI Content Studio",
+        "creator_url": None,
+        "attribution": "AI-generated with Gemini",
+    }
+
+
 MEDIA_PROVIDERS = (
     ("pexels", "PEXELS_API_KEY", search_pexels_video),
     ("pixabay", "PIXABAY_API_KEY", search_pixabay_video),
@@ -150,6 +216,22 @@ def search_video_with_failover(query: str, aspect_ratio: str) -> tuple[dict[str,
     raise RuntimeError("No media provider succeeded. " + " | ".join(errors))
 
 
+def ai_first_media(query: str, aspect_ratio: str) -> tuple[dict[str, Any], list[str]]:
+    errors: list[str] = []
+    if os.getenv("GEMINI_API_KEY", "").strip():
+        try:
+            return generate_gemini_image(query, aspect_ratio), errors
+        except Exception as exc:
+            errors.append(f"gemini-image: {str(exc)[:220]}")
+    else:
+        errors.append("gemini-image: not configured")
+
+    media, stock_errors = search_video_with_failover(query, aspect_ratio)
+    errors.extend(stock_errors)
+    errors.append("AI image unavailable; stock media fallback used")
+    return media, errors
+
+
 def _attribution_record(media: dict[str, Any]) -> dict[str, Any]:
     return {
         "provider": media.get("provider"),
@@ -165,7 +247,7 @@ def select_media_for_script(script_result: dict[str, Any], aspect_ratio: str) ->
     content = script_result.get("content") or {}
     scene_plan = content.get("scene_plan") or []
     if not isinstance(scene_plan, list) or not scene_plan:
-        raise RuntimeError("Script has no scene_plan to search media for")
+        raise RuntimeError("Script has no scene_plan to create media for")
 
     selections: list[dict[str, Any]] = []
     global_failover: list[str] = []
@@ -175,12 +257,12 @@ def select_media_for_script(script_result: dict[str, Any], aspect_ratio: str) ->
     for index, scene in enumerate(scene_plan, start=1):
         if not isinstance(scene, dict):
             continue
-        query = str(scene.get("search_query_en") or scene.get("visual") or "").strip() or "cinematic social media background"
-        media, failover_log = search_video_with_failover(query, aspect_ratio)
+        visual_prompt = str(scene.get("visual") or scene.get("search_query_en") or "").strip() or "cinematic social media scene"
+        media, failover_log = ai_first_media(visual_prompt, aspect_ratio)
         global_failover.extend(f"scene {index}: {item}" for item in failover_log)
         selections.append({
             "scene": scene.get("scene", index), "seconds": scene.get("seconds"), "visual": scene.get("visual"),
-            "caption": scene.get("caption"), "search_query": query, "media": media,
+            "caption": scene.get("caption"), "search_query": visual_prompt, "media": media,
         })
         record = _attribution_record(media)
         key = (str(record.get("provider") or ""), str(record.get("media_id") or ""))
@@ -189,20 +271,21 @@ def select_media_for_script(script_result: dict[str, Any], aspect_ratio: str) ->
             attributions.append(record)
 
     if not selections:
-        raise RuntimeError("No usable scenes were found in the script plan")
+        raise RuntimeError("No usable scenes were created from the script plan")
 
     script_result["media_attributions"] = attributions
     word_timings = [item for item in (script_result.get("word_timings") or []) if isinstance(item, dict)]
-
     providers_used = sorted({item["media"]["provider"] for item in selections})
+    attribution_required = any(item["media"].get("provider") in {"pexels", "pixabay"} for item in selections)
     return {
         "provider": "+".join(providers_used),
         "failover_log": global_failover,
         "content": {
             "scene_count": len(selections),
             "selections": selections,
-            "attribution_required": True,
+            "attribution_required": attribution_required,
             "attributions": attributions,
             "word_timings": word_timings,
+            "media_strategy": "ai-first-with-stock-fallback",
         },
     }
