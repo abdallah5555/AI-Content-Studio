@@ -44,7 +44,9 @@ def export_video(
     download_url = f"/media/exports/{filename}"
     provider = "local-export"
     if supabase_configured():
-        object_path = f"exports/{filename}"
+        # Storage object keys are deliberately ASCII-only. Keep the human-readable
+        # localized filename for downloads, but never use it as the object key.
+        object_path = f"exports/{export_id}.mp4"
         storage_path = upload_file(EXPORT_BUCKET, object_path, destination, content_type="video/mp4")
         download_url = create_signed_url(EXPORT_BUCKET, object_path, expires_in=EXPORT_LINK_TTL, download_name=filename)
         provider = "supabase-storage"
