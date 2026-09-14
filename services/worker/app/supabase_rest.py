@@ -9,8 +9,33 @@ from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
 
+def _raw_service_key() -> str:
+    return os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+
+
+def _key_is_valid(key: str) -> bool:
+    if not key:
+        return False
+    try:
+        key.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return key.startswith("sb_secret_") or key.startswith("eyJ")
+
+
 def configured() -> bool:
-    return bool(os.getenv("SUPABASE_URL", "").strip() and os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip())
+    return bool(os.getenv("SUPABASE_URL", "").strip() and _key_is_valid(_raw_service_key()))
+
+
+def configuration_error() -> str | None:
+    if not os.getenv("SUPABASE_URL", "").strip():
+        return "SUPABASE_URL is not configured"
+    key = _raw_service_key()
+    if not key:
+        return "SUPABASE_SERVICE_ROLE_KEY is not configured"
+    if not _key_is_valid(key):
+        return "SUPABASE_SERVICE_ROLE_KEY must be an sb_secret_ key or legacy service_role JWT"
+    return None
 
 
 def _base_url() -> str:
@@ -21,15 +46,19 @@ def _base_url() -> str:
 
 
 def _service_key() -> str:
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-    if not key:
-        raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is not configured")
+    key = _raw_service_key()
+    if not _key_is_valid(key):
+        raise RuntimeError(configuration_error() or "SUPABASE_SERVICE_ROLE_KEY is invalid")
     return key
 
 
 def _headers(prefer: str | None = None, *, content_type: str = "application/json") -> dict[str, str]:
     key = _service_key()
-    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": content_type}
+    headers = {"apikey": key, "Content-Type": content_type}
+    # New sb_secret_* keys are opaque API keys and must not be treated as JWTs.
+    # Legacy service_role keys are JWTs and can be sent as Bearer tokens.
+    if not key.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {key}"
     if prefer:
         headers["Prefer"] = prefer
     return headers
