@@ -8,7 +8,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .reference_store import load_references, save_reference
 from .supabase_rest import configured as supabase_configured
@@ -34,6 +34,15 @@ class ReferenceUploadResult(BaseModel):
     analysis_status: Literal["queued", "analyzing", "ready", "failed"] = "queued"
     analysis: dict[str, Any] | None = None
     analysis_error: str | None = None
+
+
+class AvatarProfileRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1200)
+    persona_type: Literal["self", "creator", "brand_mascot", "character"] = "creator"
+    style: str = Field(default="natural", max_length=120)
+    default_wardrobe: str = Field(default="", max_length=500)
+    speaking_style: str = Field(default="", max_length=500)
 
 
 REFERENCE_FILES: dict[str, ReferenceUploadResult] = {}
@@ -175,6 +184,27 @@ def _analyze_with_gemini(reference_id: str) -> dict[str, Any]:
     return {"style_summary": raw_text.strip(), "reusable_traits": [], "avoid_copying": [], "generation_guidance": raw_text.strip()}
 
 
+def _avatar_payload(result: ReferenceUploadResult) -> dict[str, Any] | None:
+    analysis = result.analysis or {}
+    profile = analysis.get("avatar_profile")
+    if not isinstance(profile, dict):
+        return None
+    return {
+        "reference_id": result.id,
+        "reference_name": result.name,
+        "kind": result.kind,
+        "analysis_status": result.analysis_status,
+        "profile": profile,
+        "visual_identity": {
+            "style_summary": analysis.get("style_summary"),
+            "character_object_design": analysis.get("character_object_design"),
+            "palette": analysis.get("palette"),
+            "lighting": analysis.get("lighting"),
+            "generation_guidance": analysis.get("generation_guidance"),
+        },
+    }
+
+
 @router.post("", response_model=ReferenceUploadResult)
 async def upload_reference(file: UploadFile = File(...)):
     mime_type = file.content_type or "application/octet-stream"
@@ -217,11 +247,14 @@ def analyze_reference(reference_id: str):
     if not result:
         raise HTTPException(status_code=404, detail="Reference not found")
 
+    existing_avatar = (result.analysis or {}).get("avatar_profile") if isinstance(result.analysis, dict) else None
     result.analysis_status = "analyzing"
     result.analysis_error = None
     _persist_reference(reference_id)
     try:
         result.analysis = _analyze_with_gemini(reference_id)
+        if existing_avatar:
+            result.analysis["avatar_profile"] = existing_avatar
         result.analysis_status = "ready"
     except Exception as exc:
         result.analysis_status = "failed"
@@ -231,6 +264,35 @@ def analyze_reference(reference_id: str):
 
     _persist_reference(reference_id)
     return result
+
+
+@router.get("/avatar-library")
+def list_avatar_library():
+    avatars = []
+    for result in REFERENCE_FILES.values():
+        payload = _avatar_payload(result)
+        if payload:
+            avatars.append(payload)
+    return {"avatars": avatars}
+
+
+@router.post("/{reference_id}/avatar-profile")
+def save_avatar_profile(reference_id: str, payload: AvatarProfileRequest):
+    result = REFERENCE_FILES.get(reference_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Reference not found")
+    if result.kind != "image":
+        raise HTTPException(status_code=400, detail="Avatar profiles currently require an image reference")
+
+    analysis = dict(result.analysis or {})
+    analysis["avatar_profile"] = {
+        **payload.model_dump(),
+        "reference_id": reference_id,
+        "identity_anchor": "Keep the same recognizable person/character identity across scenes while allowing new poses, outfits and environments requested by the user.",
+    }
+    result.analysis = analysis
+    _persist_reference(reference_id)
+    return _avatar_payload(result)
 
 
 @router.get("/{reference_id}", response_model=ReferenceUploadResult)
