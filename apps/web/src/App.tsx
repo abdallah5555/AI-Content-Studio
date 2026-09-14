@@ -12,6 +12,7 @@ import {
   Plus,
   Radar,
   Sparkles,
+  UserRound,
   WandSparkles,
 } from 'lucide-react';
 import {
@@ -26,13 +27,14 @@ import {
   type ReferencePreferences,
   type UploadedReference,
 } from './api';
+import { AvatarLibrary } from './AvatarLibrary';
 import { ContentIntelligence } from './ContentIntelligence';
 import { contentTypes, pipelineStages, platforms, type PlatformId } from './contentConfig';
 import { JobHistory } from './JobHistory';
 import { Scheduler } from './Scheduler';
 import { ServiceSettings } from './ServiceSettings';
 
-type View = 'dashboard' | 'create' | 'history' | 'intelligence' | 'schedule' | 'settings';
+type View = 'dashboard' | 'create' | 'history' | 'intelligence' | 'avatars' | 'schedule' | 'settings';
 type PreferenceKey = keyof ReferencePreferences;
 
 const defaultPreferences: ReferencePreferences = {
@@ -134,6 +136,23 @@ export function App() {
     setView('create');
   }
 
+  async function useSavedAvatar(avatar: { reference_id: string; profile: { name: string } }) {
+    setError('');
+    try {
+      const response = await fetch(resolveWorkerUrl(`/references/${avatar.reference_id}`));
+      if (!response.ok) throw new Error(await response.text());
+      const reference = await response.json() as UploadedReference;
+      setReferences([reference]);
+      setPreferences((current) => ({ ...current, preserve_character_shape: true, preserve_style: true }));
+      setIdeaPrompt((current) => current || `فيديو جديد باستخدام الأفاتار ${avatar.profile.name} كشخصية ثابتة ومقدمة للمحتوى.`);
+      setJob(null);
+      setView('create');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'تعذر تحميل الأفاتار المحفوظ.');
+      setView('create');
+    }
+  }
+
   function openHistoricalJob(restored: JobStatus) {
     setJob(restored);
     if (platforms.some((platform) => platform.id === restored.input.platform)) setPlatformId(restored.input.platform as PlatformId);
@@ -216,6 +235,7 @@ export function App() {
 
   if (view === 'history') return <JobHistory onBack={() => setView('dashboard')} onOpen={openHistoricalJob} />;
   if (view === 'intelligence') return <ContentIntelligence onBack={() => setView('dashboard')} onUseIdea={useIntelligenceIdea} />;
+  if (view === 'avatars') return <AvatarLibrary onBack={() => setView('dashboard')} onUseAvatar={(avatar) => void useSavedAvatar(avatar)} />;
   if (view === 'schedule') return <Scheduler onBack={() => setView('dashboard')} />;
   if (view === 'settings') return <ServiceSettings onBack={() => setView('dashboard')} />;
 
@@ -224,17 +244,17 @@ export function App() {
     return (
       <main className="page-shell create-page">
         <button className="back-button" onClick={() => setView('dashboard')}><ArrowRight size={18} /> العودة للوحة التحكم</button>
-        <section className="create-heading"><div className="brand-badge"><Sparkles size={18} /> إنشاء محتوى جديد</div><h1>من فكرة إلى فيديو كامل.</h1><p>اكتب فكرتك أو ابعتها من Content Intelligence، وارفع مرجع بصري لو عايز نفس الروح.</p></section>
+        <section className="create-heading"><div className="brand-badge"><Sparkles size={18} /> إنشاء محتوى جديد</div><h1>من فكرة إلى فيديو كامل.</h1><p>اكتب فكرتك أو ابعتها من رادار الفرص، وارفع مرجع بصري أو اختار أفاتار محفوظ لو عايز شخصية ثابتة.</p></section>
 
         <div className="creator-layout">
           <section className="form-card">
             <div className="field-group"><div className="field-heading"><div><span className="field-index">1</span><strong>المنصة</strong></div></div><div className="platform-grid">{platforms.map((platform) => <button key={platform.id} className={`platform-option ${platform.id === platformId ? 'selected' : ''}`} onClick={() => setPlatformId(platform.id)}><strong>{platform.label}</strong><span>{platform.aspectRatio}</span><small>{platform.hint}</small></button>)}</div></div>
             <div className="field-group"><div className="field-heading"><div><span className="field-index">2</span><strong>نوع المحتوى</strong></div></div><div className="chip-row">{contentTypes.map((type) => <button key={type} className={`choice-chip ${contentType === type ? 'selected' : ''}`} onClick={() => setContentType(type)}>{type}</button>)}</div></div>
-            <div className="field-group"><div className="field-heading"><div><span className="field-index">3</span><strong>الفكرة</strong></div></div><textarea className="prompt-area" value={ideaPrompt} onChange={(event) => setIdeaPrompt(event.target.value)} rows={6} placeholder="اكتب الفكرة أو استخدم رادار التريندات..." /></div>
+            <div className="field-group"><div className="field-heading"><div><span className="field-index">3</span><strong>الفكرة</strong></div></div><textarea className="prompt-area" value={ideaPrompt} onChange={(event) => setIdeaPrompt(event.target.value)} rows={6} placeholder="اكتب الفكرة أو استخدم رادار فرص الفيديو..." /></div>
 
             <div className="field-group">
-              <div className="field-heading"><div><span className="field-index">4</span><strong>مرجع بصري</strong></div><span className="auto-pill">اختياري</span></div>
-              <label className="upload-box"><input type="file" accept="image/*,video/*" multiple onChange={handleReferenceFiles} disabled={uploading} />{uploading ? <LoaderCircle className="spin" size={24} /> : <ImagePlus size={24} />}<div><strong>ارفع صورة أو فيديو</strong><span>نستخلص السمات البصرية ونطبقها على فكرة جديدة.</span></div></label>
+              <div className="field-heading"><div><span className="field-index">4</span><strong>الهوية البصرية / الأفاتار</strong></div><button className="review-secondary" onClick={() => setView('avatars')}><UserRound size={16} /> مكتبة الأفاتارات</button></div>
+              <label className="upload-box"><input type="file" accept="image/*,video/*" multiple onChange={handleReferenceFiles} disabled={uploading} />{uploading ? <LoaderCircle className="spin" size={24} /> : <ImagePlus size={24} />}<div><strong>ارفع صورة أو فيديو</strong><span>أو استخدم أفاتار محفوظ عشان نحافظ على شكل الشخصية والستايل.</span></div></label>
               {references.length > 0 && <div className="reference-list">{references.map((reference) => <div className="reference-item" key={reference.id}><div><strong>{reference.name}</strong><span>{prettySize(reference.size_bytes)} · {reference.analysis_status}</span></div>{reference.analysis_status === 'ready' && <CheckCircle2 size={18} />}</div>)}</div>}
               <div className="preferences-grid">{preferenceOptions.map((option) => <button key={option.key} className={`preference-card ${preferences[option.key] ? 'selected' : ''}`} onClick={() => setPreferences((current) => ({ ...current, [option.key]: !current[option.key] }))}><strong>{option.label}</strong><span>{option.hint}</span></button>)}</div>
             </div>
@@ -253,7 +273,7 @@ export function App() {
             <button className="cta wide-cta" onClick={startJob} disabled={submitting || uploading}>{submitting ? <LoaderCircle className="spin" size={19} /> : <Film size={19} />} ابدأ صناعة الفيديو</button>
           </section>
 
-          <aside className="summary-card"><span className="eyebrow">ملخص</span><h2>{selectedPlatform.label}</h2><div className="preview-frame" data-ratio={selectedPlatform.aspectRatio}><Film size={28} /><span>{selectedPlatform.aspectRatio}</span></div><dl className="summary-list"><div><dt>الدقة</dt><dd>{selectedPlatform.resolution}</dd></div><div><dt>المدة</dt><dd>{duration} ث</dd></div><div><dt>الصوت</dt><dd>{ttsRate >= 0 ? '+' : ''}{ttsRate}%</dd></div><div><dt>الموسيقى</dt><dd>{musicVolume}%</dd></div><div><dt>المراجع</dt><dd>{references.length}</dd></div></dl><div className="reference-mode-card"><WandSparkles size={18} /><div><strong>Reference-to-Idea</strong><span>روح مشابهة، فكرة أصلية.</span></div></div></aside>
+          <aside className="summary-card"><span className="eyebrow">ملخص</span><h2>{selectedPlatform.label}</h2><div className="preview-frame" data-ratio={selectedPlatform.aspectRatio}><Film size={28} /><span>{selectedPlatform.aspectRatio}</span></div><dl className="summary-list"><div><dt>الدقة</dt><dd>{selectedPlatform.resolution}</dd></div><div><dt>المدة</dt><dd>{duration} ث</dd></div><div><dt>الصوت</dt><dd>{ttsRate >= 0 ? '+' : ''}{ttsRate}%</dd></div><div><dt>الموسيقى</dt><dd>{musicVolume}%</dd></div><div><dt>المراجع/الأفاتار</dt><dd>{references.length}</dd></div></dl><div className="reference-mode-card"><WandSparkles size={18} /><div><strong>Character + Style DNA</strong><span>هوية ثابتة، فكرة جديدة.</span></div></div></aside>
         </div>
 
         {job && <section className="job-card">
@@ -269,7 +289,8 @@ export function App() {
 
   const cards = [
     { title: 'فيديو جديد', subtitle: 'ابدأ من فكرة حتى التصدير', icon: Plus, action: () => setView('create'), primary: true },
-    { title: 'Content Intelligence', subtitle: 'تريندات، فجوات، Hooks، تخطيط وذاكرة تعلم', icon: Radar, action: () => setView('intelligence'), primary: true },
+    { title: 'رادار فرص الفيديو', subtitle: 'تريندات مرتبة حسب ملاءمتها للـAI Media والأفاتار والـShorts', icon: Radar, action: () => setView('intelligence'), primary: true },
+    { title: 'مكتبة الأفاتارات', subtitle: 'احفظ شخصيتك واستخدم نفس الهوية في فيديوهات جديدة', icon: UserRound, action: () => setView('avatars'), primary: true },
     { title: 'مكتبة الأفكار', subtitle: 'راجع المشاريع السابقة والنواتج المحفوظة', icon: Lightbulb, action: () => setView('history') },
     { title: 'المحتوى المجدول', subtitle: 'إدارة مواعيد النشر القادمة', icon: CalendarDays, action: () => setView('schedule') },
     { title: 'مصادر الخدمات', subtitle: 'حالة مزودي الذكاء الاصطناعي ومكتبة الموسيقى', icon: KeyRound, action: () => setView('settings') },
@@ -277,7 +298,7 @@ export function App() {
 
   return (
     <main className="page-shell">
-      <section className="hero"><div className="brand-badge"><Sparkles size={18} /> AI Content Studio</div><h1>اكتشف الفكرة، قيّمها، وبعدها حوّلها لفيديو.</h1><p>الاستوديو يجمع Content Intelligence وخط إنتاج الفيديو والمكتبة والجدولة في واجهة واحدة.</p><div className="review-buttons"><button className="cta" onClick={() => setView('intelligence')}><Radar size={19} /> اكتشف الفرص</button><button className="review-secondary" onClick={() => setView('create')}><Film size={19} /> إنشاء فيديو</button></div></section>
+      <section className="hero"><div className="brand-badge"><Sparkles size={18} /> AI Content Studio</div><h1>اكتشف فكرة قابلة للتنفيذ، اختر شخصيتك، وبعدها حوّلها لفيديو.</h1><p>الاستوديو يجمع رادار فرص الفيديو، مكتبة الأفاتارات، Content Intelligence وخط إنتاج الفيديو في واجهة واحدة.</p><div className="review-buttons"><button className="cta" onClick={() => setView('intelligence')}><Radar size={19} /> اكتشف فرص فيديو</button><button className="review-secondary" onClick={() => setView('create')}><Film size={19} /> إنشاء فيديو</button></div></section>
       <section className="grid">{cards.map(({ title, subtitle, icon: Icon, action, primary }) => <button type="button" className={`card ${primary ? 'card-primary' : ''}`} key={title} onClick={action}><div className="icon-wrap"><Icon size={24} /></div><h2>{title}</h2><p>{subtitle}</p></button>)}</section>
       <section className="pipeline-card"><div><span className="eyebrow">خط الإنتاج</span><h2>٩ مراحل من الفكرة للنشر</h2></div><div className="pipeline">{pipelineStages.map((step, index) => <div className="step" key={step.key}><span>{index + 1}</span><strong>{step.label}</strong></div>)}</div></section>
     </main>
