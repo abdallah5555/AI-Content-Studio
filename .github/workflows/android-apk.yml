@@ -13,7 +13,7 @@ jobs:
     name: Build Android debug APK
     runs-on: ubuntu-latest
     env:
-      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      VITE_API_BASE_URL: https://ai-content-studio-worker-production.up.railway.app
     steps:
       - uses: actions/checkout@v4
 
